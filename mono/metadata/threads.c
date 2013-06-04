@@ -831,8 +831,8 @@ __readfsdword (unsigned long long offset)
 void
 mono_thread_get_stack_bounds (guint8 **staddr, size_t *stsize)
 {
-	*staddr = NULL;
-	*stsize = 0;
+	//*staddr = NULL;
+	//*stsize = 0;
 #if defined(HAVE_PTHREAD_GET_STACKSIZE_NP) && defined(HAVE_PTHREAD_GET_STACKADDR_NP)
 	*staddr = (guint8*)pthread_get_stackaddr_np (pthread_self ());
 	*stsize = pthread_get_stacksize_np (pthread_self ());
@@ -843,8 +843,8 @@ mono_thread_get_stack_bounds (guint8 **staddr, size_t *stsize)
 	return;
 	/* FIXME: simplify the mess below */
 #elif defined(HOST_WIN32)
-	/* http://en.wikipedia.org/wiki/Win32_Thread_Information_Block */
-	void* tib = (void*)__readfsdword(0x18);
+	// http://en.wikipedia.org/wiki/Win32_Thread_Information_Block
+	void *tib = (void*)__readfsdword(0x18);
 	guint8 *stackTop = (guint8*)*(int*)((char*)tib + 4);
 	guint8 *stackBottom = (guint8*)*(int*)((char*)tib + 8);
 

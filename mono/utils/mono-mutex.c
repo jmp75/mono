@@ -16,7 +16,9 @@
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
+#ifdef HAVE_SYS_TIME_H
 #include <sys/time.h>
+#endif
 #include <mono/utils/mono-memory-model.h>
 
 #include "mono-mutex.h"
