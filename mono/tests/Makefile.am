@@ -388,7 +388,10 @@ BASE_TEST_CS_SRC=		\
 	bug-6148.cs	\
 	assembly_append_ordering.cs	\
 	bug-10127.cs	\
-	allow-synchronous-major.cs
+	allow-synchronous-major.cs	\
+	unload-appdomain-on-shutdown.cs	\
+	block_guard_restore_aligment_on_exit.cs	\
+	finally_block_ending_in_dead_bb.cs
 
 TEST_CS_SRC_DIST=	\
 	$(BASE_TEST_CS_SRC)	\
@@ -441,7 +444,7 @@ if MIPS
 PLATFORM_DISABLED_TESTS=filter-stack.exe monitor.exe
 endif
 
-if S390x
+if S390X
 PLATFORM_DISABLED_TESTS=dynamic-method-resurrection.exe
 #PLATFORM_DISABLED_TESTS=dynamic-method-resurrection.exe exception17.exe
 endif
@@ -546,15 +549,11 @@ DISABLED_TESTS_WRENCH=	\
 	$(PLATFORM_DISABLED_TESTS_WRENCH)	\
 	main-returns-background-resetabort.exe \
 	main-returns-background-abort-resetabort.exe	\
-	main-returns-background.exe	\
 	thread6.exe	\
 	assemblyresolve_event3.exe \
 	delegate2.exe	\
-	finally_guard.exe  	\
-	finalizer-abort.exe	\
-	finalizer-exit.exe	\
-	finalizer-thread.exe \
-	appdomain-async-invoke.exe
+	finally_guard.exe \
+	gc-altstack.exe
 
 AOT_DISABLED_TESTS=constraints-load.exe
 
@@ -719,14 +718,14 @@ else
 if ARM
 test-sgen : sgen-tests
 else
-if S390x
+if S390X
 test-sgen : sgen-regular-tests
 endif
 endif
 endif
 endif
 
-test: assemblyresolve/test/asm.dll testjit test-generic-sharing test-type-load test_platform test_2_1 test-process-exit test-sgen test-messages rm-empty-logs
+test: assemblyresolve/test/asm.dll testjit test-generic-sharing test-type-load test_platform test_2_1 test-process-exit test-messages rm-empty-logs
 test-wrench: assemblyresolve/test/asm.dll testjit-wrench test-generic-sharing test-type-load test_platform test_2_1 test-process-exit test-sgen test-messages rm-empty-logs
 
 # Remove empty .stdout and .stderr files for wrench
@@ -878,8 +877,13 @@ test-type-load: TestDriver.dll
 	@echo "Testing load-exception.exe..."
 	@$(RUNTIME) load-exceptions.exe > load-exceptions.exe.stdout 2> load-exceptions.exe.stderr
 
+EXTRA_DIST += debug-casts.cs
+# This depends on TLS, so its not ran by default
+debug-casts:
+	@$(MCS) -r:TestDriver.dll $(srcdir)/debug-casts.cs
+	@$(RUNTIME) --debug=casts debug-casts.exe
 
-EXTRA_DIST += sgen-bridge.cs sgen-descriptors.cs sgen-gshared-vtype.cs sgen-bridge-major-fragmentation.cs sgen-domain-unload.cs sgen-weakref-stress.cs sgen-cementing-stress.cs sgen-case-23400.cs 	finalizer-wait.cs critical-finalizers.cs
+EXTRA_DIST += sgen-bridge.cs sgen-descriptors.cs sgen-gshared-vtype.cs sgen-bridge-major-fragmentation.cs sgen-domain-unload.cs sgen-weakref-stress.cs sgen-cementing-stress.cs sgen-case-23400.cs 	finalizer-wait.cs critical-finalizers.cs sgen-domain-unload-2.cs sgen-suspend.cs
 
 
 #those are actually configurations, eg plain_sgen-descriptors.exe

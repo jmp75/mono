@@ -81,8 +81,10 @@ include $(topdir)/build/config-default.make
 
 ifndef PLATFORM
 ifeq ($(OS),Windows_NT)
+$(info *** Assuming PLATFORM is 'win32'.)
 PLATFORM = win32
 else
+$(info *** Assuming PLATFORM is 'linux'.)
 PLATFORM = linux
 endif
 endif

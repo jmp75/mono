@@ -181,7 +181,7 @@ namespace Mono.CSharp {
 				return false;
 			}
 
-			TypeManager.CheckTypeVariance (ret_type, Variance.Covariant, this);
+			VarianceDecl.CheckTypeVariance (ret_type, Variance.Covariant, this);
 
 			var resolved_rt = new TypeExpression (ret_type, Location);
 			InvokeBuilder = new Method (this, resolved_rt, MethodModifiers, new MemberName (InvokeMethodName), p, null);
@@ -191,13 +191,13 @@ namespace Mono.CSharp {
 			// Don't emit async method for compiler generated delegates (e.g. dynamic site containers)
 			//
 			if (!IsCompilerGenerated) {
-				DefineAsyncMethods (Parameters.CallingConvention, resolved_rt);
+				DefineAsyncMethods (resolved_rt);
 			}
 
 			return true;
 		}
 
-		void DefineAsyncMethods (CallingConventions cc, TypeExpression returnType)
+		void DefineAsyncMethods (TypeExpression returnType)
 		{
 			var iasync_result = Module.PredefinedTypes.IAsyncResult;
 			var async_callback = Module.PredefinedTypes.AsyncCallback;
@@ -454,7 +454,7 @@ namespace Mono.CSharp {
 			Arguments delegate_arguments = new Arguments (pd.Count);
 			for (int i = 0; i < pd.Count; ++i) {
 				Argument.AType atype_modifier;
-				switch (pd.FixedParameters [i].ModFlags) {
+				switch (pd.FixedParameters [i].ModFlags & Parameter.Modifier.RefOutMask) {
 				case Parameter.Modifier.REF:
 					atype_modifier = Argument.AType.Ref;
 					break;
@@ -541,7 +541,7 @@ namespace Mono.CSharp {
 				Error_ConversionFailed (ec, delegate_method, ret_expr);
 			}
 
-			if (delegate_method.IsConditionallyExcluded (ec, loc)) {
+			if (delegate_method.IsConditionallyExcluded (ec)) {
 				ec.Report.SymbolRelatedToPreviousError (delegate_method);
 				MethodOrOperator m = delegate_method.MemberDefinition as MethodOrOperator;
 				if (m != null && m.IsPartialDefinition) {
@@ -663,7 +663,7 @@ namespace Mono.CSharp {
 		//
 		// Returns true when type is MVAR or has MVAR reference
 		//
-		static bool ContainsMethodTypeParameter (TypeSpec type)
+		public static bool ContainsMethodTypeParameter (TypeSpec type)
 		{
 			var tps = type as TypeParameterSpec;
 			if (tps != null)
@@ -857,7 +857,7 @@ namespace Mono.CSharp {
 			//
 			var call = new CallEmitter ();
 			call.InstanceExpression = InstanceExpr;
-			call.EmitPredefined (ec, method, arguments);
+			call.EmitPredefined (ec, method, arguments, loc);
 		}
 
 		public override void EmitStatement (EmitContext ec)

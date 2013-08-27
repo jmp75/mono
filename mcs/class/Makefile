@@ -68,6 +68,7 @@ common_dirs := \
 	Novell.Directory.Ldap		\
 	Mono.Security.Win32		\
 	System.DirectoryServices	\
+	System.DirectoryServices.Protocols	\
 	RabbitMQ.Client			\
 	Mono.Messaging			\
 	System.Messaging	        \
@@ -152,6 +153,9 @@ mobile_dirs := \
 	System.IO.Compression.FileSystem \
 	System.ComponentModel.DataAnnotations \
 	System.ComponentModel.Composition.4.5 \
+	System.Net \
+	System.Windows \
+	System.Xml.Serialization \
 	Facades
 
 monodroid_dirs := \
@@ -161,33 +165,7 @@ monodroid_dirs := \
 	System.Net.Http
 
 monotouch_runtime_dirs := \
-	corlib \
-	System \
-	System.XML	\
-	Mono.Posix \
-	System.Core \
-	Mono.Security			\
-	System \
-	System.Security			\
-	System.Configuration		\
-	System				\
-	System.XML			\
-	$(resgen_dir)			\
-	System.Drawing			\
-	System.Transactions		\
-	System.EnterpriseServices	\
-	Mono.Data.Tds			\
-	System.Data			\
-	Accessibility			\
-	Mono.WebBrowser			\
-	System.Runtime.Serialization.Formatters.Soap \
-	Managed.Windows.Forms		\
-	Mono.Data.Sqlite		\
-	System.Web.ApplicationServices	\
-	System.Web \
-	Mono.Web \
-	System.Web.Services \
-	System.Web
+	corlib
 
 net_3_5_only_dirs := \
 	Microsoft.Build.Framework	\
@@ -231,6 +209,7 @@ net_4_5_dirs := \
 	System.Threading.Tasks.Dataflow \
 	System.ComponentModel.Composition.4.5 \
 	System.Net.Http	\
+	System.Net.Http.WebRequest \
 	System.Web.Razor \
 	System.Web.WebPages.Deployment \
 	System.Web.WebPages \
@@ -245,12 +224,15 @@ net_4_5_dirs := \
 	Mono.CodeContracts \
 	System.IO.Compression \
 	System.IO.Compression.FileSystem \
+	System.Windows \
+	System.Xml.Serialization \
 	Facades
 	
 net_2_0_SUBDIRS := $(common_dirs) $(net_2_0_dirs) $(net_2_0_only_dirs) aot-compiler
 monodroid_SUBDIRS := $(mobile_dirs) $(monodroid_dirs)
 monotouch_SUBDIRS := $(mobile_dirs)
 monotouch_runtime_SUBDIRS := $(monotouch_runtime_dirs)
+mobile_static_SUBDIRS := $(mobile_dirs)
 mobile_SUBDIRS := $(mobile_dirs)
 net_3_5_SUBDIRS := $(net_3_5_only_dirs)
 net_4_0_SUBDIRS := $(common_dirs) $(net_2_0_dirs) $(net_4_0_dirs) $(net_4_0_only_dirs)

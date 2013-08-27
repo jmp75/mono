@@ -2627,7 +2627,7 @@ mono_remote_class_vtable (MonoDomain *domain, MonoRemoteClass *remote_class, Mon
 		type = ((MonoReflectionType *)rp->class_to_proxy)->type;
 		klass = mono_class_from_mono_type (type);
 #ifndef DISABLE_COMf
-		if ((mono_class_is_com_object (klass) || (mono_defaults.com_object_class && klass == mono_defaults.com_object_class)) && !mono_vtable_is_remote (mono_class_vtable (mono_domain_get (), klass)))
+		if ((mono_class_is_com_object (klass) || (mono_class_get_com_object_class () && klass == mono_class_get_com_object_class ())) && !mono_vtable_is_remote (mono_class_vtable (mono_domain_get (), klass)))
 			remote_class->default_vtable = mono_class_proxy_vtable (domain, remote_class, MONO_REMOTING_TARGET_COMINTEROP);
 		else
 #endif
@@ -2750,7 +2750,7 @@ mono_object_get_virtual_method (MonoObject *obj, MonoMethod *method)
 			res = mono_marshal_get_remoting_invoke_with_check (res);
 		else {
 #ifndef DISABLE_COM
-			if (klass == mono_defaults.com_object_class || mono_class_is_com_object (klass))
+			if (klass == mono_class_get_com_object_class () || mono_class_is_com_object (klass))
 				res = mono_cominterop_get_invoke (res);
 			else
 #endif
@@ -6050,6 +6050,7 @@ mono_object_to_string (MonoObject *obj, MonoObject **exc)
 {
 	static MonoMethod *to_string = NULL;
 	MonoMethod *method;
+	void *target = obj;
 
 	g_assert (obj);
 
@@ -6058,7 +6059,12 @@ mono_object_to_string (MonoObject *obj, MonoObject **exc)
 
 	method = mono_object_get_virtual_method (obj, to_string);
 
-	return (MonoString *) mono_runtime_invoke (method, obj, NULL, exc);
+	// Unbox value type if needed
+	if (mono_class_is_valuetype (mono_method_get_class (method))) {
+		target = mono_object_unbox (obj);
+	}
+
+	return (MonoString *) mono_runtime_invoke (method, target, NULL, exc);
 }
 
 /**

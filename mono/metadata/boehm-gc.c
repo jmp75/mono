@@ -147,7 +147,7 @@ mono_gc_base_init (void)
 	GC_allow_register_threads();
 #endif
 
-	if ((env = getenv ("MONO_GC_PARAMS"))) {
+	if ((env = g_getenv ("MONO_GC_PARAMS"))) {
 		char **ptr, **opts = g_strsplit (env, ",", -1);
 		for (ptr = opts; *ptr; ++ptr) {
 			char *opt = *ptr;
@@ -564,9 +564,9 @@ mono_gc_alloc_fixed (size_t size, void *descr)
 	/*
 	static int count;
 	count ++;
-	if (count == atoi (getenv ("COUNT2")))
+	if (count == atoi (g_getenv ("COUNT2")))
 		printf ("HIT!\n");
-	if (count > atoi (getenv ("COUNT2")))
+	if (count > atoi (g_getenv ("COUNT2")))
 		return GC_MALLOC (size);
 	*/
 
@@ -911,11 +911,10 @@ mono_gc_is_critical_method (MonoMethod *method)
  */
 
 MonoMethod*
-mono_gc_get_managed_allocator (MonoVTable *vtable, gboolean for_box)
+mono_gc_get_managed_allocator (MonoClass *klass, gboolean for_box)
 {
 	int offset = -1;
 	int atype;
-	MonoClass *klass = vtable->klass;
 	MONO_THREAD_VAR_OFFSET (GC_thread_tls, offset);
 
 	/*g_print ("thread tls: %d\n", offset);*/
@@ -926,6 +925,8 @@ mono_gc_get_managed_allocator (MonoVTable *vtable, gboolean for_box)
 	if (mono_class_has_finalizer (klass) || mono_class_is_marshalbyref (klass) || (mono_profiler_get_events () & MONO_PROFILE_ALLOCATIONS))
 		return NULL;
 	if (klass->rank)
+		return NULL;
+	if (mono_class_is_open_constructed_type (&klass->byval_arg))
 		return NULL;
 	if (klass->byval_arg.type == MONO_TYPE_STRING) {
 		atype = ATYPE_STRING;
@@ -996,7 +997,7 @@ mono_gc_is_critical_method (MonoMethod *method)
 }
 
 MonoMethod*
-mono_gc_get_managed_allocator (MonoVTable *vtable, gboolean for_box)
+mono_gc_get_managed_allocator (MonoClass *klass, gboolean for_box)
 {
 	return NULL;
 }

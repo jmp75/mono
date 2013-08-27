@@ -12,6 +12,7 @@
 #include <mono/metadata/tabledefs.h>
 #include <mono/utils/mono-counters.h>
 #include <mono/utils/mono-error-internals.h>
+#include <mono/utils/mono-membar.h>
 
 #include "mini.h"
 #include "debug-mini.h"
@@ -266,8 +267,9 @@ is_generic_method_definition (MonoMethod *m)
 		return TRUE;
 	return FALSE;
 }
-static gboolean
-ji_is_gsharedvt (MonoJitInfo *ji)
+
+gboolean
+mini_jit_info_is_gsharedvt (MonoJitInfo *ji)
 {
 	if (ji && ji->has_generic_jit_info && (mono_jit_info_get_generic_sharing_context (ji)->var_is_vt ||
 										   mono_jit_info_get_generic_sharing_context (ji)->mvar_is_vt))
@@ -292,7 +294,7 @@ mini_add_method_trampoline (MonoMethod *orig_method, MonoMethod *m, gpointer com
 		mini_jit_info_table_find (mono_domain_get (), mono_get_addr_from_ftnptr (compiled_method), NULL);
 
 	// FIXME: This loads information from AOT
-	callee_gsharedvt = ji_is_gsharedvt (ji);
+	callee_gsharedvt = mini_jit_info_is_gsharedvt (ji);
 
 	callee_array_helper = FALSE;
 	if (m->wrapper_type == MONO_WRAPPER_MANAGED_TO_MANAGED) {
@@ -524,7 +526,7 @@ common_call_trampoline (mgreg_t *regs, guint8 *code, MonoMethod *m, guint8* tram
 			actual_method = vt->klass->vtable [displacement];
 		}
 
-		if (method_inst) {
+		if (method_inst || m->wrapper_type) {
 			MonoGenericContext context = { NULL, NULL };
 
 			if (m->is_inflated)
@@ -997,7 +999,7 @@ mono_delegate_trampoline (mgreg_t *regs, guint8 *code, gpointer *tramp_data, gui
 #ifndef DISABLE_REMOTING
 		if (delegate->target && delegate->target->vtable->klass == mono_defaults.transparent_proxy_class) {
 #ifndef DISABLE_COM
-			if (((MonoTransparentProxy *)delegate->target)->remote_class->proxy_class != mono_defaults.com_object_class && 
+			if (((MonoTransparentProxy *)delegate->target)->remote_class->proxy_class != mono_class_get_com_object_class () &&
 			   !mono_class_is_com_object (((MonoTransparentProxy *)delegate->target)->remote_class->proxy_class))
 #endif
 				method = mono_marshal_get_remoting_invoke (method);
@@ -1128,6 +1130,11 @@ gpointer
 mono_create_handler_block_trampoline (void)
 {
 	static gpointer code;
+	if (code) {
+		mono_memory_barrier ();
+		return code;
+	}
+
 
 	if (mono_aot_only) {
 		g_assert (0);
@@ -1136,9 +1143,11 @@ mono_create_handler_block_trampoline (void)
 
 	mono_trampolines_lock ();
 
-	if (!code)
-		code = mono_arch_create_handler_block_trampoline ();
-
+	if (!code) {
+		gpointer tmp = mono_arch_create_handler_block_trampoline ();
+		mono_memory_barrier ();
+		code = tmp;
+	}
 	mono_trampolines_unlock ();
 
 	return code;
@@ -1674,15 +1683,11 @@ static const char*tramp_names [MONO_TRAMPOLINE_NUM] = {
 	"aot_plt",
 	"delegate",
 	"restore_stack_prot",
-#ifndef DISABLE_REMOTING
 	"generic_virtual_remoting",
-#endif
 	"monitor_enter",
 	"monitor_exit",
 	"vcall",
-#ifdef MONO_ARCH_HAVE_HANDLER_BLOCK_GUARD
 	"handler_block_guard"
-#endif
 };
 
 /*

@@ -1893,6 +1893,14 @@ major_have_computer_minor_collection_allowance (void)
 		void **empty_block_arr;
 		void **rebuild_next;
 
+#ifdef TARGET_WIN32
+		/*
+		 * sgen_free_os_memory () asserts in mono_vfree () because windows doesn't like freeing the middle of
+		 * a VirtualAlloc ()-ed block.
+		 */
+		return;
+#endif
+
 		if (num_empty_blocks <= section_reserve)
 			return;
 		SGEN_ASSERT (0, num_empty_blocks > 0, "section reserve can't be negative");
@@ -2297,6 +2305,9 @@ major_scan_card_table (gboolean mod_union, SgenGrayQueue *queue)
 				 */
 				if (!card_data)
 					continue;
+#else
+				g_assert_not_reached ();
+				card_data = NULL;
 #endif
 			} else {
 				card_data = card_base = sgen_card_table_get_card_scan_address ((mword)block_start);

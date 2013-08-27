@@ -107,6 +107,8 @@ static const AssemblyVersionMap framework_assemblies [] = {
 	{"System.Data", 0},
 	{"System.Data.Linq", 2},
 	{"System.Data.OracleClient", 0},
+	{"System.Data.Services", 2},
+	{"System.Data.Services.Client", 2},
 	{"System.Data.SqlXml", 0},
 	{"System.Design", 0},
 	{"System.DirectoryServices", 0},
@@ -115,19 +117,25 @@ static const AssemblyVersionMap framework_assemblies [] = {
 	{"System.EnterpriseServices", 0},
 	{"System.Management", 0},
 	{"System.Messaging", 0},
+	{"System.Net", 2},
 	{"System.Runtime.Remoting", 0},
 	{"System.Runtime.Serialization", 3},
 	{"System.Runtime.Serialization.Formatters.Soap", 0},
 	{"System.Security", 0},
+	{"System.ServiceModel.Web", 2},
 	{"System.ServiceProcess", 0},
 	{"System.Transactions", 0},
 	{"System.Web", 0},
 	{"System.Web.Abstractions", 2},
+	{"System.Web.DynamicData", 2},
+	{"System.Web.Extensions", 2},
 	{"System.Web.Mobile", 0},
 	{"System.Web.Routing", 2},
 	{"System.Web.Services", 0},
 	{"System.Windows.Forms", 0},
 	{"System.Xml", 0},
+	{"System.Xml.Linq", 2},
+	{"WindowsBase", 3},
 	{"mscorlib", 0}
 };
 #endif
@@ -645,6 +653,7 @@ mono_set_rootdir (void)
 		gchar buf[4096];
  		guint buf_size = sizeof (buf);
  
+		name = NULL;
  		if (_NSGetExecutablePath (buf, &buf_size) == 0)
  			name = g_strdup (buf);
  
@@ -852,6 +861,8 @@ static KeyRemapEntry key_remap_table[] = {
 	{ "System.ComponentModel.Composition", WINFX_KEY, ECMA_KEY },
 	{ "System.ComponentModel.DataAnnotations", "ddd0da4d3e678217", WINFX_KEY },
 	{ "System.Core", SILVERLIGHT_KEY, ECMA_KEY },
+	// FIXME: MS uses MSFINAL_KEY for .NET 4.5
+	{ "System.Net", SILVERLIGHT_KEY, ECMA_KEY },
 	{ "System.Numerics", WINFX_KEY, ECMA_KEY },
 	{ "System.Runtime.Serialization", SILVERLIGHT_KEY, ECMA_KEY },
 	{ "System.ServiceModel", WINFX_KEY, ECMA_KEY },

@@ -27,6 +27,7 @@
 #include <mono/utils/mono-counters.h>
 #include <mono/utils/mono-mmap.h>
 #include <mono/utils/mono-memory-model.h>
+#include <mono/utils/mono-hwcap-x86.h>
 
 #include "trace.h"
 #include "mini-x86.h"
@@ -36,7 +37,11 @@
 
 /* On windows, these hold the key returned by TlsAlloc () */
 static gint lmf_tls_offset = -1;
+#ifdef TARGET_WIN32
+static gint jit_tls_offset = -1;
+#else
 static gint lmf_addr_tls_offset = -1;
+#endif
 static gint appdomain_tls_offset = -1;
 
 #ifdef MONO_XEN_OPT
@@ -195,6 +200,8 @@ typedef enum {
 	ArgValuetypeInReg,
 	ArgOnFloatFpStack,
 	ArgOnDoubleFpStack,
+	/* gsharedvt argument passed by addr */
+	ArgGSharedVt,
 	ArgNone
 } ArgStorage;
 
@@ -244,6 +251,7 @@ add_general (guint32 *gr, guint32 *stack_size, ArgInfo *ainfo)
 
     if (*gr >= PARAM_REGS) {
 		ainfo->storage = ArgOnStack;
+		ainfo->nslots = 1;
 		(*stack_size) += sizeof (gpointer);
     }
     else {
@@ -405,6 +413,11 @@ get_call_info_internal (MonoGenericSharingContext *gsctx, CallInfo *cinfo, MonoM
 				cinfo->ret.reg = X86_EAX;
 				break;
 			}
+			if (mini_is_gsharedvt_type_gsctx (gsctx, ret_type)) {
+				cinfo->ret.storage = ArgOnStack;
+				cinfo->vtype_retaddr = TRUE;
+				break;
+			}
 			/* Fall through */
 		case MONO_TYPE_VALUETYPE:
 		case MONO_TYPE_TYPEDBYREF: {
@@ -417,6 +430,12 @@ get_call_info_internal (MonoGenericSharingContext *gsctx, CallInfo *cinfo, MonoM
 			}
 			break;
 		}
+		case MONO_TYPE_VAR:
+		case MONO_TYPE_MVAR:
+			g_assert (mini_is_gsharedvt_type_gsctx (gsctx, ret_type));
+			cinfo->ret.storage = ArgOnStack;
+			cinfo->vtype_retaddr = TRUE;
+			break;
 		case MONO_TYPE_VOID:
 			cinfo->ret.storage = ArgNone;
 			break;
@@ -513,6 +532,13 @@ get_call_info_internal (MonoGenericSharingContext *gsctx, CallInfo *cinfo, MonoM
 				add_general (&gr, &stack_size, ainfo);
 				break;
 			}
+			if (mini_is_gsharedvt_type_gsctx (gsctx, ptype)) {
+				/* gsharedvt arguments are passed by ref */
+				add_general (&gr, &stack_size, ainfo);
+				g_assert (ainfo->storage == ArgOnStack);
+				ainfo->storage = ArgGSharedVt;
+				break;
+			}
 			/* Fall through */
 		case MONO_TYPE_VALUETYPE:
 		case MONO_TYPE_TYPEDBYREF:
@@ -527,6 +553,14 @@ get_call_info_internal (MonoGenericSharingContext *gsctx, CallInfo *cinfo, MonoM
 			break;
 		case MONO_TYPE_R8:
 			add_float (&fr, &stack_size, ainfo, TRUE);
+			break;
+		case MONO_TYPE_VAR:
+		case MONO_TYPE_MVAR:
+			/* gsharedvt arguments are passed by ref */
+			g_assert (mini_is_gsharedvt_type_gsctx (gsctx, ptype));
+			add_general (&gr, &stack_size, ainfo);
+			g_assert (ainfo->storage == ArgOnStack);
+			ainfo->storage = ArgGSharedVt;
 			break;
 		default:
 			g_error ("unexpected type 0x%x", ptype->type);
@@ -669,129 +703,6 @@ mono_x86_tail_call_supported (MonoMethodSignature *caller_sig, MonoMethodSignatu
 	return res;
 }
 
-#if !defined(__native_client__)
-static const guchar cpuid_impl [] = {
-	0x55,                   	/* push   %ebp */
-	0x89, 0xe5,                	/* mov    %esp,%ebp */
-	0x53,                   	/* push   %ebx */
-	0x8b, 0x45, 0x08,             	/* mov    0x8(%ebp),%eax */
-	0x0f, 0xa2,                	/* cpuid   */
-	0x50,                   	/* push   %eax */
-	0x8b, 0x45, 0x10,             	/* mov    0x10(%ebp),%eax */
-	0x89, 0x18,                	/* mov    %ebx,(%eax) */
-	0x8b, 0x45, 0x14,             	/* mov    0x14(%ebp),%eax */
-	0x89, 0x08,                	/* mov    %ecx,(%eax) */
-	0x8b, 0x45, 0x18,             	/* mov    0x18(%ebp),%eax */
-	0x89, 0x10,                	/* mov    %edx,(%eax) */
-	0x58,                   	/* pop    %eax */
-	0x8b, 0x55, 0x0c,             	/* mov    0xc(%ebp),%edx */
-	0x89, 0x02,                	/* mov    %eax,(%edx) */
-	0x5b,                   	/* pop    %ebx */
-	0xc9,                   	/* leave   */
-	0xc3,                   	/* ret     */
-};
-#else
-static const guchar cpuid_impl [] = {
-	0x55,                   		/* push   %ebp */
-	0x89, 0xe5,                		/* mov    %esp,%ebp */
-	0x53,                   		/* push   %ebx */
-	0x8b, 0x45, 0x08,             		/* mov    0x8(%ebp),%eax */
-	0x0f, 0xa2,                		/* cpuid   */
-	0x50,                   		/* push   %eax */
-	0x8b, 0x45, 0x10,             		/* mov    0x10(%ebp),%eax */
-	0x89, 0x18,                		/* mov    %ebx,(%eax) */
-	0x8b, 0x45, 0x14,             		/* mov    0x14(%ebp),%eax */
-	0x89, 0x08,                		/* mov    %ecx,(%eax) */
-	0x8b, 0x45, 0x18,             		/* mov    0x18(%ebp),%eax */
-	0x89, 0x10,                		/* mov    %edx,(%eax) */
-	0x58,                   		/* pop    %eax */
-	0x8b, 0x55, 0x0c,             		/* mov    0xc(%ebp),%edx */
-	0x89, 0x02,                		/* mov    %eax,(%edx) */
-	0x5b,                   		/* pop    %ebx */
-	0xc9,                   		/* leave   */
-	0x59, 0x83, 0xe1, 0xe0, 0xff, 0xe1,	/* naclret */
-	0xf4, 0xf4, 0xf4, 0xf4, 0xf4, 0xf4,     /* padding, to provide bundle aligned version */
-	0xf4, 0xf4, 0xf4, 0xf4, 0xf4, 0xf4,
-	0xf4, 0xf4, 0xf4, 0xf4, 0xf4, 0xf4,
-	0xf4, 0xf4, 0xf4, 0xf4, 0xf4, 0xf4,
-	0xf4
-};
-#endif
-
-typedef void (*CpuidFunc) (int id, int* p_eax, int* p_ebx, int* p_ecx, int* p_edx);
-
-static int 
-cpuid (int id, int* p_eax, int* p_ebx, int* p_ecx, int* p_edx)
-{
-#if defined(__native_client__)
-	static CpuidFunc func = NULL;
-	void *ptr, *end_ptr;
-	if (!func) {
-		ptr = mono_global_codeman_reserve (sizeof (cpuid_impl));
-		memcpy(ptr, cpuid_impl, sizeof(cpuid_impl));
-		end_ptr = ptr + sizeof(cpuid_impl);
-		nacl_global_codeman_validate (&ptr, sizeof(cpuid_impl), &end_ptr);
-		func = (CpuidFunc)ptr;
-	}
-	func (id, p_eax, p_ebx, p_ecx, p_edx);
-#else
-	int have_cpuid = 0;
-#ifndef _MSC_VER
-	__asm__  __volatile__ (
-		"pushfl\n"
-		"popl %%eax\n"
-		"movl %%eax, %%edx\n"
-		"xorl $0x200000, %%eax\n"
-		"pushl %%eax\n"
-		"popfl\n"
-		"pushfl\n"
-		"popl %%eax\n"
-		"xorl %%edx, %%eax\n"
-		"andl $0x200000, %%eax\n"
-		"movl %%eax, %0"
-		: "=r" (have_cpuid)
-		:
-		: "%eax", "%edx"
-	);
-#else
-	__asm {
-		pushfd
-		pop eax
-		mov edx, eax
-		xor eax, 0x200000
-		push eax
-		popfd
-		pushfd
-		pop eax
-		xor eax, edx
-		and eax, 0x200000
-		mov have_cpuid, eax
-	}
-#endif
-	if (have_cpuid) {
-		/* Have to use the code manager to get around WinXP DEP */
-		static CpuidFunc func = NULL;
-		void *ptr;
-		if (!func) {
-			ptr = mono_global_codeman_reserve (sizeof (cpuid_impl));
-			memcpy (ptr, cpuid_impl, sizeof (cpuid_impl));
-			func = (CpuidFunc)ptr;
-		}
-		func (id, p_eax, p_ebx, p_ecx, p_edx);
-
-		/*
-		 * We use this approach because of issues with gcc and pic code, see:
-		 * http://gcc.gnu.org/cgi-bin/gnatsweb.pl?cmd=view%20audit-trail&database=gcc&pr=7329
-		__asm__ __volatile__ ("cpuid"
-			: "=a" (*p_eax), "=b" (*p_ebx), "=c" (*p_ecx), "=d" (*p_edx)
-			: "a" (id));
-		*/
-		return 1;
-	}
-	return 0;
-#endif
-}
-
 /*
  * Initialize the cpu to execute managed code.
  */
@@ -851,36 +762,32 @@ guint32
 mono_arch_cpu_optimizations (guint32 *exclude_mask)
 {
 #if !defined(__native_client__)
-	int eax, ebx, ecx, edx;
 	guint32 opts = 0;
-	
+
 	*exclude_mask = 0;
 
-	if (mono_aot_only)
-		/* The cpuid function allocates from the global codeman */
-		return opts;
+	if (mono_hwcap_x86_has_cmov) {
+		opts |= MONO_OPT_CMOV;
 
-	/* Feature Flags function, flags returned in EDX. */
-	if (cpuid (1, &eax, &ebx, &ecx, &edx)) {
-		if (edx & (1 << 15)) {
-			opts |= MONO_OPT_CMOV;
-			if (edx & 1)
-				opts |= MONO_OPT_FCMOV;
-			else
-				*exclude_mask |= MONO_OPT_FCMOV;
-		} else
-			*exclude_mask |= MONO_OPT_CMOV;
-		if (edx & (1 << 26))
-			opts |= MONO_OPT_SSE2;
+		if (mono_hwcap_x86_has_fcmov)
+			opts |= MONO_OPT_FCMOV;
 		else
-			*exclude_mask |= MONO_OPT_SSE2;
+			*exclude_mask |= MONO_OPT_FCMOV;
+	} else {
+		*exclude_mask |= MONO_OPT_CMOV;
+	}
+
+	if (mono_hwcap_x86_has_sse2)
+		opts |= MONO_OPT_SSE2;
+	else
+		*exclude_mask |= MONO_OPT_SSE2;
 
 #ifdef MONO_ARCH_SIMD_INTRINSICS
 		/*SIMD intrinsics require at least SSE2.*/
-		if (!(opts & MONO_OPT_SSE2))
+		if (!mono_hwcap_x86_has_sse2)
 			*exclude_mask |= MONO_OPT_SIMD;
 #endif
-	}
+
 	return opts;
 #else
 	return MONO_OPT_CMOV | MONO_OPT_FCMOV | MONO_OPT_SSE2;
@@ -896,42 +803,30 @@ mono_arch_cpu_optimizations (guint32 *exclude_mask)
 guint32
 mono_arch_cpu_enumerate_simd_versions (void)
 {
-	int eax, ebx, ecx, edx;
 	guint32 sse_opts = 0;
 
-	if (mono_aot_only)
-		/* The cpuid function allocates from the global codeman */
-		return sse_opts;
+	if (mono_hwcap_x86_has_sse1)
+		sse_opts |= SIMD_VERSION_SSE1;
 
-	if (cpuid (1, &eax, &ebx, &ecx, &edx)) {
-		if (edx & (1 << 25))
-			sse_opts |= SIMD_VERSION_SSE1;
-		if (edx & (1 << 26))
-			sse_opts |= SIMD_VERSION_SSE2;
-		if (ecx & (1 << 0))
-			sse_opts |= SIMD_VERSION_SSE3;
-		if (ecx & (1 << 9))
-			sse_opts |= SIMD_VERSION_SSSE3;
-		if (ecx & (1 << 19))
-			sse_opts |= SIMD_VERSION_SSE41;
-		if (ecx & (1 << 20))
-			sse_opts |= SIMD_VERSION_SSE42;
-	}
+	if (mono_hwcap_x86_has_sse2)
+		sse_opts |= SIMD_VERSION_SSE2;
 
-	/* Yes, all this needs to be done to check for sse4a.
-	   See: "Amd: CPUID Specification"
-	 */
-	if (cpuid (0x80000000, &eax, &ebx, &ecx, &edx)) {
-		/* eax greater or equal than 0x80000001, ebx = 'htuA', ecx = DMAc', edx = 'itne'*/
-		if ((((unsigned int) eax) >= 0x80000001) && (ebx == 0x68747541) && (ecx == 0x444D4163) && (edx == 0x69746E65)) {
-			cpuid (0x80000001, &eax, &ebx, &ecx, &edx);
-			if (ecx & (1 << 6))
-				sse_opts |= SIMD_VERSION_SSE4a;
-		}
-	}
+	if (mono_hwcap_x86_has_sse3)
+		sse_opts |= SIMD_VERSION_SSE3;
 
+	if (mono_hwcap_x86_has_ssse3)
+		sse_opts |= SIMD_VERSION_SSSE3;
 
-	return sse_opts;	
+	if (mono_hwcap_x86_has_sse41)
+		sse_opts |= SIMD_VERSION_SSE41;
+
+	if (mono_hwcap_x86_has_sse42)
+		sse_opts |= SIMD_VERSION_SSE42;
+
+	if (mono_hwcap_x86_has_sse4a)
+		sse_opts |= SIMD_VERSION_SSE4a;
+
+	return sse_opts;
 }
 
 /*
@@ -1442,6 +1337,9 @@ mono_arch_get_llvm_call_info (MonoCompile *cfg, MonoMethodSignature *sig)
 				linfo->args [i].pair_storage [j] = arg_storage_to_llvm_arg_storage (cfg, ainfo->pair_storage [j]);
 			*/
 			break;
+		case ArgGSharedVt:
+			linfo->args [i].storage = LLVMArgGSharedVt;
+			break;
 		default:
 			cfg->exception_message = g_strdup ("ainfo->storage");
 			cfg->disable_llvm = TRUE;
@@ -1551,7 +1449,13 @@ mono_arch_emit_call (MonoCompile *cfg, MonoCallInst *call)
 
 		g_assert (in->dreg != -1);
 
-		if ((i >= sig->hasthis) && (MONO_TYPE_ISSTRUCT(t))) {
+		if (ainfo->storage == ArgGSharedVt) {
+			arg->opcode = OP_OUTARG_VT;
+			arg->sreg1 = in->dreg;
+			arg->klass = in->klass;
+			sp_offset += 4;
+			MONO_ADD_INS (cfg->cbb, arg);
+		} else if ((i >= sig->hasthis) && (MONO_TYPE_ISSTRUCT(t))) {
 			guint32 align;
 			guint32 size;
 
@@ -1679,7 +1583,12 @@ mono_arch_emit_outarg_vt (MonoCompile *cfg, MonoInst *ins, MonoInst *src)
 	MonoInst *arg;
 	int size = ins->backend.size;
 
-	if (size <= 4) {
+	if (cfg->gsharedvt && mini_is_gsharedvt_klass (cfg, ins->klass)) {
+		/* Pass by addr */
+		MONO_INST_NEW (cfg, arg, OP_X86_PUSH);
+		arg->sreg1 = src->dreg;
+		MONO_ADD_INS (cfg->cbb, arg);
+	} else if (size <= 4) {
 		MONO_INST_NEW (cfg, arg, OP_X86_PUSH_MEMBASE);
 		arg->sreg1 = src->dreg;
 
@@ -3235,7 +3144,7 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			/* restore ESP/EBP */
 			x86_leave (code);
 			offset = code - cfg->native_code;
-			mono_add_patch_info (cfg, offset, MONO_PATCH_INFO_METHOD_JUMP, ins->inst_p0);
+			mono_add_patch_info (cfg, offset, MONO_PATCH_INFO_METHOD_JUMP, call->method);
 			x86_jump32 (code, 0);
 
 			ins->flags |= MONO_INST_GC_CALLSITE;
@@ -4156,6 +4065,21 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 		}
 		case OP_TLS_GET: {
 			code = mono_x86_emit_tls_get (code, ins->dreg, ins->inst_offset);
+			break;
+		}
+		case OP_TLS_GET_REG: {
+#ifdef __APPLE__
+			// FIXME: tls_gs_offset can change too, do these when calculating the tls offset
+			if (ins->dreg != ins->sreg1)
+				x86_mov_reg_reg (code, ins->dreg, ins->sreg1, sizeof (gpointer));
+			x86_shift_reg_imm (code, X86_SHL, ins->dreg, 2);
+			if (tls_gs_offset)
+				x86_alu_reg_imm (code, X86_ADD, ins->dreg, tls_gs_offset);
+			x86_prefix (code, X86_GS_PREFIX);
+			x86_mov_reg_membase (code, ins->dreg, ins->dreg, 0, sizeof (gpointer));
+#else
+			g_assert_not_reached ();
+#endif
 			break;
 		}
 		case OP_MEMORY_BARRIER: {
@@ -5207,16 +5131,21 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 			 * This is performance critical so we try to use some tricks to make
 			 * it fast.
 			 */									   
+			gboolean have_fastpath = FALSE;
 
-			if (lmf_addr_tls_offset != -1) {
-				/* Load lmf quicky using the GS register */
-				code = mono_x86_emit_tls_get (code, X86_EAX, lmf_addr_tls_offset);
 #ifdef TARGET_WIN32
-				/* The TLS key actually contains a pointer to the MonoJitTlsData structure */
-				/* FIXME: Add a separate key for LMF to avoid this */
+			if (jit_tls_offset != -1) {
+				code = mono_x86_emit_tls_get (code, X86_EAX, jit_tls_offset);				
 				x86_alu_reg_imm (code, X86_ADD, X86_EAX, G_STRUCT_OFFSET (MonoJitTlsData, lmf));
+				have_fastpath = TRUE;
+			}
+#else
+			if (lmf_addr_tls_offset != -1) {
+				code = mono_x86_emit_tls_get (code, X86_EAX, lmf_addr_tls_offset);
+				have_fastpath = TRUE;
+			}
 #endif
-			} else {
+			if (!have_fastpath) {
 				if (cfg->compile_aot)
 					code = mono_arch_emit_load_got_addr (cfg->native_code, code, cfg, NULL);
 				code = emit_call (cfg, code, MONO_PATCH_INFO_INTERNAL_METHOD, (gpointer)"mono_get_lmf_addr");
@@ -5707,20 +5636,20 @@ mono_arch_is_inst_imm (gint64 imm)
 void
 mono_arch_finish_init (void)
 {
-	if (!getenv ("MONO_NO_TLS")) {
+	if (!g_getenv ("MONO_NO_TLS")) {
 #ifdef TARGET_WIN32
 		/* 
 		 * We need to init this multiple times, since when we are first called, the key might not
 		 * be initialized yet.
 		 */
 		appdomain_tls_offset = mono_domain_get_tls_key ();
-		lmf_tls_offset = mono_get_jit_tls_key ();
+		jit_tls_offset = mono_get_jit_tls_key ();
 
 		/* Only 64 tls entries can be accessed using inline code */
 		if (appdomain_tls_offset >= 64)
 			appdomain_tls_offset = -1;
-		if (lmf_tls_offset >= 64)
-			lmf_tls_offset = -1;
+		if (jit_tls_offset >= 64)
+			jit_tls_offset = -1;
 #else
 #if MONO_XEN_OPT
 		optimize_for_xen = access ("/proc/xen", F_OK) == 0;
@@ -6215,13 +6144,16 @@ mono_arch_get_delegate_invoke_impls (void)
 	guint8 *code;
 	guint32 code_len;
 	int i;
+	char *tramp_name;
 
 	code = get_delegate_invoke_impl (TRUE, 0, &code_len);
-	res = g_slist_prepend (res, mono_tramp_info_create (g_strdup ("delegate_invoke_impl_has_target"), code, code_len, NULL, NULL));
+	res = g_slist_prepend (res, mono_tramp_info_create ("delegate_invoke_impl_has_target", code, code_len, NULL, NULL));
 
 	for (i = 0; i < MAX_ARCH_DELEGATE_PARAMS; ++i) {
 		code = get_delegate_invoke_impl (FALSE, i, &code_len);
-		res = g_slist_prepend (res, mono_tramp_info_create (g_strdup_printf ("delegate_invoke_impl_target_%d", i), code, code_len, NULL, NULL));
+		tramp_name = g_strdup_printf ("delegate_invoke_impl_target_%d", i);
+		res = g_slist_prepend (res, mono_tramp_info_create (tramp_name, code, code_len, NULL, NULL));
+		g_free (tramp_name);
 	}
 
 	return res;
@@ -6687,7 +6619,7 @@ mono_arch_is_single_step_event (void *info, void *sigctx)
 #ifdef TARGET_WIN32
 	EXCEPTION_RECORD* einfo = ((EXCEPTION_POINTERS*)info)->ExceptionRecord;	/* Sometimes the address is off by 4 */
 
-	if ((einfo->ExceptionInformation[1] >= ss_trigger_page && (guint8*)einfo->ExceptionInformation[1] <= (guint8*)ss_trigger_page + 128))
+	if (((gpointer)einfo->ExceptionInformation[1] >= ss_trigger_page && (guint8*)einfo->ExceptionInformation[1] <= (guint8*)ss_trigger_page + 128))
 		return TRUE;
 	else
 		return FALSE;
@@ -6706,7 +6638,7 @@ mono_arch_is_breakpoint_event (void *info, void *sigctx)
 {
 #ifdef TARGET_WIN32
 	EXCEPTION_RECORD* einfo = ((EXCEPTION_POINTERS*)info)->ExceptionRecord;	/* Sometimes the address is off by 4 */
-	if ((einfo->ExceptionInformation[1] >= bp_trigger_page && (guint8*)einfo->ExceptionInformation[1] <= (guint8*)bp_trigger_page + 128))
+	if (((gpointer)einfo->ExceptionInformation[1] >= bp_trigger_page && (guint8*)einfo->ExceptionInformation[1] <= (guint8*)bp_trigger_page + 128))
 		return TRUE;
 	else
 		return FALSE;

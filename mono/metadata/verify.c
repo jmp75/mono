@@ -869,7 +869,7 @@ mono_type_is_valid_in_context (VerifyContext *ctx, MonoType *type)
 	if (!is_valid_type_in_context (ctx, type)) {
 		char *str = mono_type_full_name (type);
 		ADD_VERIFY_ERROR2 (ctx, g_strdup_printf ("Invalid generic type (%s%s) (argument out of range or %s is not generic) at 0x%04x",
-			type->type == MONO_TYPE_VAR ? "!" : "!!",
+			str [0] == '!' ? "" : type->type == MONO_TYPE_VAR ? "!" : "!!",
 			str,
 			type->type == MONO_TYPE_VAR ? "class" : "method",
 			ctx->ip_offset),
@@ -2089,6 +2089,28 @@ get_icollection_class (void)
 }
 
 static MonoClass*
+get_ireadonlylist_class (void)
+{
+	static MonoClass* generic_ireadonlylist_class = NULL;
+
+	if (generic_ireadonlylist_class == NULL)
+		generic_ireadonlylist_class = mono_class_from_name (mono_defaults.corlib,
+			"System.Collections.Generic", "IReadOnlyList`1");
+	return generic_ireadonlylist_class;
+}
+
+static MonoClass*
+get_ireadonlycollection_class (void)
+{
+	static MonoClass* generic_ireadonlycollection_class = NULL;
+
+	if (generic_ireadonlycollection_class == NULL)
+		generic_ireadonlycollection_class = mono_class_from_name (mono_defaults.corlib,
+			"System.Collections.Generic", "IReadOnlyCollection`1");
+	return generic_ireadonlycollection_class;
+}
+
+static MonoClass*
 inflate_class_one_arg (MonoClass *gtype, MonoClass *arg0)
 {
 	MonoType *args [1];
@@ -2127,6 +2149,10 @@ verifier_class_is_assignable_from (MonoClass *target, MonoClass *candidate)
 				if (verifier_inflate_and_check_compat (target, get_icollection_class (), candidate->element_class))
 					return TRUE;
 				if (verifier_inflate_and_check_compat (target, get_ienumerable_class (), candidate->element_class))
+					return TRUE;
+				if (verifier_inflate_and_check_compat (target, get_ireadonlylist_class (), candidate->element_class))
+					return TRUE;
+				if (verifier_inflate_and_check_compat (target, get_ireadonlycollection_class (), candidate->element_class))
 					return TRUE;
 			} else {
 				MonoError error;
@@ -4952,7 +4978,9 @@ mono_method_verify (MonoMethod *method, int level)
 				ADD_VERIFY_ERROR (&ctx, g_strdup_printf ("Catch clause %d with invalid type", i));
 				break;
 			}
-		
+			if (!mono_type_is_valid_in_context (&ctx, &clause->data.catch_class->byval_arg))
+				break;
+
 			init_stack_with_value_at_exception_boundary (&ctx, ctx.code + clause->handler_offset, clause->data.catch_class);
 		}
 		else if (clause->flags == MONO_EXCEPTION_CLAUSE_FILTER) {
@@ -4960,6 +4988,9 @@ mono_method_verify (MonoMethod *method, int level)
 			init_stack_with_value_at_exception_boundary (&ctx, ctx.code + clause->handler_offset, mono_defaults.exception_class);	
 		}
 	}
+
+	if (!ctx.valid)
+		goto cleanup;
 
 	original_bb = bb = mono_basic_block_split (method, &error);
 	if (!mono_error_ok (&error)) {

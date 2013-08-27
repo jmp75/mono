@@ -117,6 +117,8 @@ LIB_MCS_FLAGS = \
 	/r:System.Xml.Linq.dll                                            \
 	/r:System.Configuration.dll
 
+CLEAN_FILES += $(the_lib).config
+
 TEST_MCS_FLAGS = /r:System.dll /r:System.Core.dll /r:System.Xml.dll
 
 DOC_SOURCE_DIRS = \

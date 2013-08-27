@@ -26,11 +26,18 @@ using System.Reflection;
 /* A comparison made to same variable. */
 #pragma warning disable 1718
 
-class Tests {
+#if MOBILE
+class FloatTests
+#else
+class Tests
+#endif
+{
 
+#if !MOBILE
 	public static int Main (string[] args) {
 		return TestDriver.RunTests (typeof (Tests), args);
 	}
+#endif
 	
 	public static int test_0_beq () {
 		double a = 2.0;
@@ -73,6 +80,20 @@ class Tests {
 		sbyte sb = (sbyte)a;
 		if (sb != 2)
 			return 6;
+		/* MS.NET special cases these */
+		double d = Double.NaN;
+		ui = (uint)d;
+		if (ui != 0)
+			return 7;
+		d = Double.PositiveInfinity;
+		ui = (uint)d;
+		if (ui != 0)
+			return 8;
+		d = Double.NegativeInfinity;
+		ui = (uint)d;
+		if (ui != 0)
+			return 9;
+
 		return 0;
 	}
 

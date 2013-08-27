@@ -59,21 +59,6 @@ namespace MonoTests.System.Runtime.CompilerServices
 		}
 
 		[Test]
-		public void GetResultNotCompleted ()
-		{
-			TaskAwaiter awaiter;
-
-			var task = new Task (() => { });
-			awaiter = task.GetAwaiter ();
-
-			try {
-				awaiter.GetResult ();
-				Assert.Fail ();
-			} catch (InvalidOperationException) {
-			}
-		}
-
-		[Test]
 		public void GetResultCanceled ()
 		{
 			TaskAwaiter awaiter;
@@ -87,6 +72,18 @@ namespace MonoTests.System.Runtime.CompilerServices
 				Assert.Fail ();
 			} catch (TaskCanceledException) {
 			}
+		}
+
+		[Test]
+		public void GetResultWaitOnCompletion ()
+		{
+			TaskAwaiter awaiter;
+				
+			var task = Task.Delay (30);
+			awaiter = task.GetAwaiter ();
+				
+			awaiter.GetResult ();
+			Assert.AreEqual (TaskStatus.RanToCompletion, task.Status);
 		}
 	}
 }

@@ -315,8 +315,11 @@ namespace Mono.CSharp {
 
 			var hoisted = localVariable.HoistedVariant;
 			if (hoisted != null && hoisted.Storey != this && hoisted.Storey is StateMachine) {
-				// TODO: It's too late the field is defined in HoistedLocalVariable ctor
+				//
+				// Variable is already hoisted but we need it in storey which can be shared
+				//
 				hoisted.Storey.hoisted_locals.Remove (hoisted);
+				hoisted.Storey.Members.Remove (hoisted.Field);
 				hoisted = null;
 			}
 
@@ -728,6 +731,12 @@ namespace Mono.CSharp {
 			this.field = field;
 		}
 
+		public Field Field {
+			get {
+				return field;
+			}
+		}
+
 		public AnonymousMethodStorey Storey {
 			get {
 				return storey;
@@ -848,12 +857,6 @@ namespace Mono.CSharp {
 
 		#region Properties
 
-		public Field Field {
-			get {
-				return field;
-			}
-		}
-
 		public bool IsAssigned { get; set; }
 
 		public ParameterReference Parameter {
@@ -892,12 +895,6 @@ namespace Mono.CSharp {
 		public HoistedThis (AnonymousMethodStorey storey, Field field)
 			: base (storey, field)
 		{
-		}
-
-		public Field Field {
-			get {
-				return field;
-			}
 		}
 	}
 
@@ -959,6 +956,12 @@ namespace Mono.CSharp {
 			}
 		}
 
+		public override bool IsSideEffectFree {
+			get {
+				return true;
+			}
+		}
+
 		public ParametersCompiled Parameters {
 			get {
 				return Block.Parameters;
@@ -1010,9 +1013,9 @@ namespace Mono.CSharp {
 			return null;
 		}
 
-		protected bool VerifyExplicitParameters (ResolveContext ec, TypeSpec delegate_type, AParametersCollection parameters)
+		protected bool VerifyExplicitParameters (ResolveContext ec, TypeInferenceContext tic, TypeSpec delegate_type, AParametersCollection parameters)
 		{
-			if (VerifyParameterCompatibility (ec, delegate_type, parameters, ec.IsInProbingMode))
+			if (VerifyParameterCompatibility (ec, tic, delegate_type, parameters, ec.IsInProbingMode))
 				return true;
 
 			if (!ec.IsInProbingMode)
@@ -1023,7 +1026,7 @@ namespace Mono.CSharp {
 			return false;
 		}
 
-		protected bool VerifyParameterCompatibility (ResolveContext ec, TypeSpec delegate_type, AParametersCollection invoke_pd, bool ignore_errors)
+		protected bool VerifyParameterCompatibility (ResolveContext ec, TypeInferenceContext tic, TypeSpec delegate_type, AParametersCollection invoke_pd, bool ignore_errors)
 		{
 			if (Parameters.Count != invoke_pd.Count) {
 				if (ignore_errors)
@@ -1044,10 +1047,10 @@ namespace Mono.CSharp {
 						return false;
 					
 					if (p_mod == Parameter.Modifier.NONE)
-						ec.Report.Error (1677, loc, "Parameter `{0}' should not be declared with the `{1}' keyword",
-							      (i + 1).ToString (), Parameter.GetModifierSignature (Parameters.FixedParameters [i].ModFlags));
+						ec.Report.Error (1677, Parameters[i].Location, "Parameter `{0}' should not be declared with the `{1}' keyword",
+							      (i + 1).ToString (), Parameter.GetModifierSignature (Parameters [i].ModFlags));
 					else
-						ec.Report.Error (1676, loc, "Parameter `{0}' must be declared with the `{1}' keyword",
+						ec.Report.Error (1676, Parameters[i].Location, "Parameter `{0}' must be declared with the `{1}' keyword",
 							      (i+1).ToString (), Parameter.GetModifierSignature (p_mod));
 					error = true;
 				}
@@ -1056,19 +1059,15 @@ namespace Mono.CSharp {
 					continue;
 
 				TypeSpec type = invoke_pd.Types [i];
+
+				if (tic != null)
+					type = tic.InflateGenericArgument (ec, type);
 				
-				// We assume that generic parameters are always inflated
-				if (TypeManager.IsGenericParameter (type))
-					continue;
-				
-				if (TypeManager.HasElementType (type) && TypeManager.IsGenericParameter (TypeManager.GetElementType (type)))
-					continue;
-				
-				if (!TypeSpecComparer.IsEqual (invoke_pd.Types [i], Parameters.Types [i])) {
+				if (!TypeSpecComparer.IsEqual (type, Parameters.Types [i])) {
 					if (ignore_errors)
 						return false;
 					
-					ec.Report.Error (1678, loc, "Parameter `{0}' is declared as type `{1}' but should be `{2}'",
+					ec.Report.Error (1678, Parameters [i].Location, "Parameter `{0}' is declared as type `{1}' but should be `{2}'",
 						      (i+1).ToString (),
 						      Parameters.Types [i].GetSignatureForError (),
 						      invoke_pd.Types [i].GetSignatureForError ());
@@ -1082,7 +1081,7 @@ namespace Mono.CSharp {
 		//
 		// Infers type arguments based on explicit arguments
 		//
-		public bool ExplicitTypeInference (ResolveContext ec, TypeInferenceContext type_inference, TypeSpec delegate_type)
+		public bool ExplicitTypeInference (TypeInferenceContext type_inference, TypeSpec delegate_type)
 		{
 			if (!HasExplicitParameters)
 				return false;
@@ -1296,7 +1295,7 @@ namespace Mono.CSharp {
 				return ParametersCompiled.CreateFullyResolved (fixedpars, delegate_parameters.Types);
 			}
 
-			if (!VerifyExplicitParameters (ec, delegate_type, delegate_parameters)) {
+			if (!VerifyExplicitParameters (ec, tic, delegate_type, delegate_parameters)) {
 				return null;
 			}
 
@@ -1661,18 +1660,25 @@ namespace Mono.CSharp {
 					if (src_block.HasCapturedThis) {
 						//
 						// Remove hoisted 'this' request when simple instance method is
-						// enough (no hoisted variables only 'this')
+						// enough. No hoisted variables only 'this' and don't need to
+						// propagate this to value type state machine.
 						//
-						if (src_block.ParametersBlock.StateMachine == null)
-							top_block.RemoveThisReferenceFromChildrenBlock (src_block);
+						StateMachine sm_parent;
+						var pb = src_block.ParametersBlock;
+						do {
+							sm_parent = pb.StateMachine;
+							pb = pb.Parent == null ? null : pb.Parent.ParametersBlock;
+						} while (sm_parent == null && pb != null);
 
-						//
-						// Special case where parent class is used to emit instance method
-						// because currect storey is of value type (async host). We cannot
-						// use ldftn on non-boxed instances either to share mutated state
-						//
-						if (sm != null && sm.Kind == MemberKind.Struct) {
-							parent = sm.Parent.PartialContainer;
+						if (sm_parent == null) {
+							top_block.RemoveThisReferenceFromChildrenBlock (src_block);
+						} else if (sm_parent.Kind == MemberKind.Struct) {
+							//
+							// Special case where parent class is used to emit instance method
+							// because currect storey is of value type (async host) and we cannot
+							// use ldftn on non-boxed instances either to share mutated state
+							//
+							parent = sm_parent.Parent.PartialContainer;
 						}
 					}
 
@@ -1987,7 +1993,7 @@ namespace Mono.CSharp {
 
 			Method tostring = new Method (this, new TypeExpression (Compiler.BuiltinTypes.String, loc),
 				Modifiers.PUBLIC | Modifiers.OVERRIDE | Modifiers.DEBUGGER_HIDDEN, new MemberName ("ToString", loc),
-				Mono.CSharp.ParametersCompiled.EmptyReadOnlyParameters, null);
+				ParametersCompiled.EmptyReadOnlyParameters, null);
 
 			ToplevelBlock equals_block = new ToplevelBlock (Compiler, equals.ParameterInfo, loc);
 
@@ -2096,7 +2102,7 @@ namespace Mono.CSharp {
 			Method hashcode = new Method (this, new TypeExpression (Compiler.BuiltinTypes.Int, loc),
 				Modifiers.PUBLIC | Modifiers.OVERRIDE | Modifiers.DEBUGGER_HIDDEN,
 				new MemberName ("GetHashCode", loc),
-				Mono.CSharp.ParametersCompiled.EmptyReadOnlyParameters, null);
+				ParametersCompiled.EmptyReadOnlyParameters, null);
 
 			//
 			// Modified FNV with good avalanche behavior and uniform

@@ -908,6 +908,12 @@ decode_method_ref_with_target (MonoAotModule *module, MethodRef *ref, MonoMethod
 				if (!m)
 					return FALSE;
 				ref->method = mono_marshal_get_synchronized_inner_wrapper (m);
+			} else if (subtype == WRAPPER_SUBTYPE_ARRAY_ACCESSOR) {
+				MonoMethod *m = decode_resolve_method_ref (module, p, &p);
+
+				if (!m)
+					return FALSE;
+				ref->method = mono_marshal_get_array_accessor_wrapper (m);
 			} else if (subtype == WRAPPER_SUBTYPE_GSHAREDVT_IN) {
 				ref->method = mono_marshal_get_gsharedvt_in_wrapper ();
 			} else if (subtype == WRAPPER_SUBTYPE_GSHAREDVT_OUT) {
@@ -1042,6 +1048,7 @@ decode_method_ref_with_target (MonoAotModule *module, MethodRef *ref, MonoMethod
 		case MONO_WRAPPER_DELEGATE_BEGIN_INVOKE:
 		case MONO_WRAPPER_DELEGATE_END_INVOKE: {
 			gboolean is_inflated = decode_value (p, &p);
+			WrapperSubtype subtype;
 
 			if (is_inflated) {
 				MonoClass *klass;
@@ -1079,6 +1086,19 @@ decode_method_ref_with_target (MonoAotModule *module, MethodRef *ref, MonoMethod
 				if (!target)
 					return FALSE;
 
+				if (wrapper_type == MONO_WRAPPER_DELEGATE_INVOKE) {
+					WrapperInfo *info;
+
+					subtype = decode_value (p, &p);
+					info = mono_marshal_get_wrapper_info (target);
+					if (info) {
+						if (info->subtype != subtype)
+							return FALSE;
+					} else {
+						if (subtype != WRAPPER_SUBTYPE_NONE)
+							return FALSE;
+					}
+				}
 				if (sig_matches_target (module, target, p, &p))
 					ref->method = target;
 				else
@@ -1527,6 +1547,7 @@ load_aot_module (MonoAssembly *assembly, gpointer user_data)
 	int i, version;
 	guint8 *blob;
 	gboolean do_load_image = TRUE;
+	int align_double, align_int64;
 
 	if (mono_compile_aot)
 		return;
@@ -1617,9 +1638,29 @@ load_aot_module (MonoAssembly *assembly, gpointer user_data)
 		return;
 	}
 
+#if defined (TARGET_ARM) && defined (TARGET_MACH)
+	{
+		MonoType t;
+		int align = 0;
+
+		memset (&t, 0, sizeof (MonoType));
+		t.type = MONO_TYPE_R8;
+		mono_type_size (&t, &align);
+		align_double = align;
+
+		memset (&t, 0, sizeof (MonoType));
+		t.type = MONO_TYPE_I8;
+		align_int64 = align;
+	}
+#else
+	align_double = __alignof__ (double);
+	align_int64 = __alignof__ (gint64);
+#endif
+
 	/* Sanity check */
-	g_assert (info->double_align == __alignof__ (double));
-	g_assert (info->long_align == __alignof__ (gint64));
+	g_assert (info->double_align == align_double);
+	g_assert (info->long_align == align_int64);
+	g_assert (info->generic_tramp_num == MONO_TRAMPOLINE_NUM);
 
 	blob = info->blob;
 
@@ -2127,14 +2168,10 @@ decode_llvm_mono_eh_frame (MonoAotModule *amodule, MonoDomain *domain,
 
 	/* Header */
 	version = *p;
-	g_assert (version == 1 || version == 2);
+	g_assert (version == 3);
 	p ++;
-	if (version == 2) {
-		func_encoding = *p;
-		p ++;
-	} else {
-		func_encoding = DW_EH_PE_pcrel;
-	}
+	func_encoding = *p;
+	p ++;
 	p = ALIGN_PTR_TO (p, 4);
 
 	fde_count = *(guint32*)p;
@@ -2145,31 +2182,20 @@ decode_llvm_mono_eh_frame (MonoAotModule *amodule, MonoDomain *domain,
 	cie = p + ((fde_count + 1) * 8);
 
 	/* Binary search in the table to find the entry for code */
-	if (func_encoding == DW_EH_PE_absptr) {
-		/*
-		 * Table entries are encoded as DW_EH_PE_absptr, because the ios linker can move functions inside object files to make thumb work,
-		 * so the offsets between two symbols in the text segment are not assembler constant.
-		 */
-		g_assert (sizeof(gpointer) == 4);
-		offset = GPOINTER_TO_INT (code);
-	} else {
-		/* Table entries are encoded as DW_EH_PE_pcrel relative to mono_eh_frame */
-		offset = code - amodule->mono_eh_frame;
-	}
-
+	offset = code - amodule->code;
 	left = 0;
 	right = fde_count;
 	while (TRUE) {
 		pos = (left + right) / 2;
 
-		offset1 = table [(pos * 2)];
+		/* The table contains method index/fde offset pairs */
+		g_assert (table [(pos * 2)] != -1);
+		offset1 = amodule->code_offsets [table [(pos * 2)]];
 		if (pos + 1 == fde_count) {
-			if (func_encoding == DW_EH_PE_absptr)
-				offset2 = GPOINTER_TO_INT (amodule->code_end);
-			else
-				offset2 = amodule->code_end - amodule->code;
+			offset2 = amodule->code_end - amodule->code;
 		} else {
-			offset2 = table [(pos + 1) * 2];
+			g_assert (table [(pos + 1) * 2] != -1);
+			offset2 = amodule->code_offsets [table [(pos + 1) * 2]];
 		}
 
 		if (offset < offset1)
@@ -2180,13 +2206,13 @@ decode_llvm_mono_eh_frame (MonoAotModule *amodule, MonoDomain *domain,
 			break;
 	}
 
-	if (func_encoding == DW_EH_PE_absptr) {
-		code_start = (gpointer)(gsize)table [(pos * 2)];
-		code_end = (gpointer)(gsize)table [(pos * 2) + 2];
+	code_start = amodule->code + amodule->code_offsets [table [(pos * 2)]];
+	if (pos + 1 == fde_count) {
+		/* The +1 entry in the table contains the length of the last method */
+		int len = table [(pos + 1) * 2];
+		code_end = code_start + len;
 	} else {
-		code_start = amodule->mono_eh_frame + table [(pos * 2)];
-		/* This won't overflow because there is +1 entry in the table */
-		code_end = amodule->mono_eh_frame + table [(pos * 2) + 2];
+		code_end = amodule->code + amodule->code_offsets [table [(pos + 1) * 2]];
 	}
 	code_len = code_end - code_start;
 
@@ -2983,6 +3009,9 @@ decode_patch (MonoAotModule *aot_module, MonoMemPool *mp, MonoJumpInfo *ji, guin
 	case MONO_PATCH_INFO_SIGNATURE:
 		ji->data.target = decode_signature (aot_module, p, &p);
 		break;
+	case MONO_PATCH_INFO_TLS_OFFSET:
+		ji->data.target = GINT_TO_POINTER (decode_value (p, &p));
+		break;
 	case MONO_PATCH_INFO_GSHAREDVT_CALL: {
 		MonoJumpInfoGSharedVtCall *info = g_new0 (MonoJumpInfoGSharedVtCall, 1);
 		info->sig = decode_signature (aot_module, p, &p);
@@ -2990,6 +3019,41 @@ decode_patch (MonoAotModule *aot_module, MonoMemPool *mp, MonoJumpInfo *ji, guin
 		info->method = decode_resolve_method_ref (aot_module, p, &p);
 		g_assert (info->method);
 
+		ji->data.target = info;
+		break;
+	}
+	case MONO_PATCH_INFO_GSHAREDVT_METHOD: {
+		MonoGSharedVtMethodInfo *info = g_new0 (MonoGSharedVtMethodInfo, 1);
+		int i, nentries;
+		
+		info->method = decode_resolve_method_ref (aot_module, p, &p);
+		g_assert (info->method);
+		nentries = decode_value (p, &p);
+		info->entries = g_ptr_array_new ();
+		for (i = 0; i < nentries; ++i) {
+			MonoRuntimeGenericContextInfoTemplate *template = g_new0 (MonoRuntimeGenericContextInfoTemplate, 1);
+
+			template->info_type = decode_value (p, &p);
+			switch (mini_rgctx_info_type_to_patch_info_type (template->info_type)) {
+			case MONO_PATCH_INFO_CLASS: {
+				MonoClass *klass = decode_klass_ref (aot_module, p, &p);
+				if (!klass)
+					goto cleanup;
+				template->data = &klass->byval_arg;
+				break;
+			}
+			case MONO_PATCH_INFO_FIELD:
+				template->data = decode_field_info (aot_module, p, &p);
+				if (!template->data)
+					goto cleanup;
+				break;
+			default:
+				g_assert_not_reached ();
+				break;
+			}
+
+			g_ptr_array_add (info->entries, template);
+		}
 		ji->data.target = info;
 		break;
 	}
@@ -3443,6 +3507,7 @@ mono_aot_get_method (MonoDomain *domain, MonoMethod *method)
 	g_assert (klass->inited);
 
 	/* Find method index */
+	method_index = 0xffffff;
 	if (method->is_inflated && !method->wrapper_type && mono_method_is_generic_sharable_full (method, FALSE, FALSE, FALSE)) {
 		/* 
 		 * For generic methods, we store the fully shared instance in place of the
