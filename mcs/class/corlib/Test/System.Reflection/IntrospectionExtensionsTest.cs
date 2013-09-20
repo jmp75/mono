@@ -1,9 +1,10 @@
 //
-// IServiceHostFactory.cs
+// IntrospectionExtensionsTest.cs:
 //
-// Author: Atsushi Enomoto (atsushi@ximian.com)
+// Authors:
+//	Marek Safar (marek.safar@gmail.com)
 //
-// Copyright (C) 2006 Novell, Inc (http://www.novell.com)
+// (C) 2013
 //
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
@@ -24,14 +25,33 @@
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
-using System;
-using System.ServiceModel.Channels;
 
-namespace System.ServiceModel.Activation
+#if NET_4_5
+
+using System;
+using System.Reflection;
+
+using NUnit.Framework;
+
+namespace MonoTests.System.Reflection
 {
-	public interface IServiceHostFactory
+	[TestFixture]
+	public class IntrospectionExtensionsTest
 	{
-		ServiceHostBase CreateServiceHost (string constructorString,
-			Uri [] baseAddresses);
+		[Test]
+		[ExpectedException (typeof (ArgumentNullException))]
+		public void GetTypeInfo_NullArgument ()
+		{
+			IntrospectionExtensions.GetTypeInfo (null);
+		}
+		
+		[Test]
+		public void GetTypeInfo_SystemType ()
+		{
+			var t = typeof (double);
+			Assert.AreSame (t, IntrospectionExtensions.GetTypeInfo (t));
+		}
 	}
 }
+
+#endif

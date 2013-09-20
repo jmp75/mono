@@ -14,10 +14,8 @@ JITTEST_PROG_RUN = MONO_SHARED_DIR=$(mono_build_root)/runtime MONO_CFG_DIR=$(mon
 RUNTIME_ARGS=--config tests-config --optimize=all --debug
 
 with_mono_path = MONO_PATH=$(mcs_topdir)/class/lib/net_4_5
-with_mono_path_moonlight = MONO_PATH=$(mcs_topdir)/class/lib/moonlight_raw
 
 RUNTIME = $(with_mono_path) $(top_builddir)/runtime/mono-wrapper
-RUNTIME_MOONLIGHT = $(with_mono_path_moonlight) $(top_builddir)/runtime/mono-wrapper
 
 MKBUNDLE = \
 	PKG_CONFIG_PATH=$(top_builddir):$(PKG_CONFIG_PATH) \
@@ -703,17 +701,15 @@ test-messages: w32message.exe
 	$(with_mono_path) $(JITTEST_PROG_RUN) w32message.exe >& w32message.allout && cmp test_messages.zero w32message.allout
 endif
 
-if MOONLIGHT
-test_2_1 : test-coreclr-security
-else
-test_2_1 :
-endif
-
 if AMD64
 test-sgen : sgen-tests
 else
 if X86
+if HOST_WIN32
+test-sgen :
+else
 test-sgen : sgen-tests
+endif
 else
 if ARM
 test-sgen : sgen-tests
@@ -725,8 +721,12 @@ endif
 endif
 endif
 
-test: assemblyresolve/test/asm.dll testjit test-generic-sharing test-type-load test_platform test_2_1 test-process-exit test-messages rm-empty-logs
-test-wrench: assemblyresolve/test/asm.dll testjit-wrench test-generic-sharing test-type-load test_platform test_2_1 test-process-exit test-sgen test-messages rm-empty-logs
+# Precompile the test assemblies in parallel
+compile-tests:
+	$(MAKE) -j4 $(TESTSI_CS) $(TESTSI_IL) $(TESTBS) libtest.la $(PREREQSI_IL) $(PREREQSI_CS)
+
+test: assemblyresolve/test/asm.dll testjit test-generic-sharing test-type-load test_platform test-process-exit test-messages rm-empty-logs
+test-wrench: compile-tests assemblyresolve/test/asm.dll testjit-wrench test-generic-sharing test-type-load test_platform test-process-exit test-sgen test-messages rm-empty-logs
 
 # Remove empty .stdout and .stderr files for wrench
 rm-empty-logs:
@@ -790,7 +790,7 @@ runtest-wrench: $(TESTSI_CS) $(TESTSI_IL) $(TESTBS) libtest.la $(PREREQSI_IL) $(
 	done; \
 	echo "$${passed} test(s) passed. $${failed} test(s) did not pass."; \
 	if [ $${failed} != 0 ]; then echo -e "\nFailed tests:\n"; \
-	  for i in $${failed_tests}; do echo $${i}; done; exit 1; fi
+	  for i in $${failed_tests}; do echo $${i}; cat $${i}.stdout; cat $${i}.stderr; done; exit 1; fi
 
 runtest-managed-wrench: test-runner.exe $(TESTSI_CS) $(TESTSI_IL) $(TESTBS) libtest.la $(PREREQSI_IL) $(PREREQSI_CS)
 	@$(RUNTIME) ./test-runner.exe -j a --disabled '$(DISABLED_TESTS_WRENCH)' $(TESTSI_CS) $(TESTBS) $(TESTSI_IL)
@@ -883,7 +883,7 @@ debug-casts:
 	@$(MCS) -r:TestDriver.dll $(srcdir)/debug-casts.cs
 	@$(RUNTIME) --debug=casts debug-casts.exe
 
-EXTRA_DIST += sgen-bridge.cs sgen-descriptors.cs sgen-gshared-vtype.cs sgen-bridge-major-fragmentation.cs sgen-domain-unload.cs sgen-weakref-stress.cs sgen-cementing-stress.cs sgen-case-23400.cs 	finalizer-wait.cs critical-finalizers.cs sgen-domain-unload-2.cs sgen-suspend.cs
+EXTRA_DIST += sgen-bridge.cs sgen-descriptors.cs sgen-gshared-vtype.cs sgen-bridge-major-fragmentation.cs sgen-domain-unload.cs sgen-weakref-stress.cs sgen-cementing-stress.cs sgen-case-23400.cs 	finalizer-wait.cs critical-finalizers.cs sgen-domain-unload-2.cs sgen-suspend.cs sgen-new-threads-dont-join-stw.cs
 
 
 #those are actually configurations, eg plain_sgen-descriptors.exe
@@ -897,7 +897,8 @@ SGEN_TESTS =	\
 	sgen-domain-unload.exe	\
 	sgen-weakref-stress.exe	\
 	sgen-cementing-stress.exe	\
-	sgen-case-23400.exe
+	sgen-case-23400.exe	\
+	sgen-new-threads-dont-join-stw.exe
 
 SGEN_CONFIGURATIONS =	\
 	"|plain"	\
@@ -962,6 +963,43 @@ sgen-bridge-tests: sgen-bridge.exe sgen-bridge-major-fragmentation.exe
 	  for i in $${failed_tests}; do echo $${i}; done; exit 1; fi
 
 sgen-tests: sgen-regular-tests sgen-bridge-tests
+
+AOT_CONFIGURATIONS=	\
+	"|regular"	\
+	"--gc=boehm|boehm"
+
+#LLVM crashes, got to fix it first.
+#	"--llvm|llvm"	\
+#	"--llvm --gc=boehm|llvm+boehm"
+
+
+test-aot:
+	@failed=0; \
+	passed=0; \
+	failed_tests="";\
+	profile=net_4_5;	\
+	tmpfile=`mktemp -t mono_aot_output` || exit 1;	\
+	for assembly in $(mcs_topdir)/class/lib/$$profile/*.dll	; do	\
+		asm_name=`basename $$assembly`;	\
+		echo "... $$asm_name";	\
+		for conf in $(AOT_CONFIGURATIONS); do	\
+			name=`echo $$conf | cut -d\| -f 2`;	\
+			params=`echo $$conf | cut -d\| -f 1`;	\
+			test_name="$${asm_name}|$${name}";	\
+			echo "testing $$test_name";	\
+			if MONO_PATH=$(mcs_topdir)/class/lib/$$profile $(JITTEST_PROG_RUN) $$params --aot=outfile=$$tmpfile $$assembly;	\
+			then \
+				passed=`expr $${passed} + 1`; \
+			else \
+				failed=`expr $${failed} + 1`; \
+				failed_tests="$${failed_tests} $$test_name"; \
+			fi \
+		done;	\
+	done;	\
+	rm	$$tmpfile;	\
+	echo "$${passed} test(s) passed. $${failed} test(s) did not pass."; \
+	if [ $${failed} != 0 ]; then echo -e "\nFailed tests:\n"; \
+	for i in $${failed_tests}; do echo $${i}; done; exit 1; fi
 
 
 # Generated tests for runtime invoke
@@ -1056,14 +1094,12 @@ bug-382986.exe: bug-382986.cs bug-382986-lib.dll
 
 EXTRA_DIST += coreclr-security.cs
 
-if MOONLIGHT
 coreclr-security.exe : coreclr-security.cs
 	$(SMCS) -out:coreclr-security.exe $(srcdir)/coreclr-security.cs
 
 test-coreclr-security : coreclr-security.exe
 	@echo "Testing coreclr-security.exe..."
 	@$(RUNTIME_MOONLIGHT) --security=core-clr-test coreclr-security.exe
-endif
 
 EXTRA_DIST += generic-unboxing.2.il
 generic-unboxing.2.dll : generic-unboxing.2.il

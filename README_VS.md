@@ -1,18 +1,18 @@
-README.vsnet					Last updated: 2013-06-30
-
 
 Scope
 ------------
 
-This document covers the material and instructions to compile the 
-Mono runtime using Visual Studio. 
+This document is a pointer to material and instructions to access and/or compile the Mono runtime using Visual Studio. 
+
+Status and queries
+------------
+
+This document was last updated 2013-09. For queries or comments you should use the mailing list mono-list (http://lists.ximian.com/pipermail/mono-list/) or mono-devel-list (lists.ximian.com/pipermail/mono-devel-list/)
 
 Description
 ------------
 
-Mono includes a Visual Studio .NET 2012 solution, mono.sln, and some 
-projects files to build most of the unmanaged parts in Mono.
-
+Mono includes a Visual Studio .NET 2012 solution, mono.sln, and some projects files to build most of the unmanaged parts in Mono.
 
 REQUIREMENTS
 ------------
