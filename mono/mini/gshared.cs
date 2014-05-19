@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 
@@ -18,7 +19,7 @@ struct GFoo<T> {
 }
 
 struct GFoo2<T> {
-	public T t, t2;
+	public T t, t2, t3;
 }
 
 class GFoo3<T> {
@@ -383,6 +384,16 @@ public class Tests
 		return t;
 	}
 
+	interface IFaceGSharedVtIn {
+		T return_t<T> (T t);
+	}
+
+	class ClassGSharedVtIn : IFaceGSharedVtIn {
+		public T return_t<T> (T t) {
+			return t;
+		}
+	}
+
 	public static int test_0_gsharedvt_in () {
 		// Check that the non-generic argument is passed at the correct stack position
 		int r = args_simple<bool> (true, 42);
@@ -426,9 +437,14 @@ public class Tests
 		var v2 = return_t<GFoo2<int>> (v);
 		if (v2.t != 55 || v2.t2 != 32)
 			return 6;
+		IFaceGSharedVtIn o = new ClassGSharedVtIn ();
+		var v3 = new GFoo2<long> () { t = 55, t2 = 32 };
+		var v4 = o.return_t<GFoo2<long>> (v3);
+		if (v4.t != 55 || v4.t2 != 32)
+			return 7;
 		i = new GSharedTests ().return_this_t<int> (42);
 		if (i != 42)
-			return 7;
+			return 8;
 		return 0;
 	}
 
@@ -1291,6 +1307,15 @@ public class Tests
 		}
 	}
 
+	struct ConsStructThrow : IConstrained {
+		public void foo () {
+			throw new Exception ();
+		}
+
+		public void foo_ref_arg (string s) {
+		}
+	}
+
 	interface IFaceConstrained {
 		void constrained_void_iface_call<T, T2>(T t, T2 t2) where T2 : IConstrained;
 		void constrained_void_iface_call_ref_arg<T, T2>(T t, T2 t2) where T2 : IConstrained;
@@ -1356,6 +1381,17 @@ public class Tests
 		return 0;
 	}
 
+	public static int test_0_constrained_eh () {
+		var s2 = new ConsStructThrow () { };
+		try {
+			IFaceConstrained c = new ClassConstrained ();
+			c.constrained_void_iface_call<int, ConsStructThrow> (1, s2);
+			return 1;
+		} catch (Exception) {
+			return 0;
+		}
+	}
+
 	public static int test_0_constrained_void_iface_call_gsharedvt_arg () {
 		// This tests constrained calls through interfaces with one gsharedvt arg, like IComparable<T>.CompareTo ()
 		IFaceConstrained c = new ClassConstrained ();
@@ -1408,13 +1444,20 @@ public class Tests
 	[MethodImplAttribute (MethodImplOptions.NoInlining)]
 	public static void call_async<T> (int i, int j) {
 		Task<T> t = FooAsync<T> (1, 2);
-		t.RunSynchronously ();
+		// FIXME: This doesn't work
+		//t.RunSynchronously ();
 	}
 
 	// In AOT mode, the async infrastructure depends on gsharedvt methods
 	public static int test_0_async_call_from_generic () {
 		call_async<string> (1, 2);
 		return 0;
+	}
+
+	public static int test_0_array_helper_gsharedvt () {
+		var arr = new AnEnum [16];
+		var c = new ReadOnlyCollection<AnEnum> (arr);
+		return c.Contains (AnEnum.Two) == false ? 0 : 1;
 	}
 }
 

@@ -117,6 +117,7 @@ common_sources = \
 	filewatcher.c		\
 	filewatcher.h		\
 	gc-internal.h		\
+	gc-memfuncs.c		\
 	icall.c			\
 	icall-def.h		\
 	image.c			\
@@ -218,6 +219,9 @@ sgen_sources = \
 	sgen-protocol.c \
 	sgen-bridge.c		\
 	sgen-bridge.h		\
+	sgen-old-bridge.c		\
+	sgen-new-bridge.c		\
+	sgen-tarjan-bridge.c		\
 	sgen-toggleref.c		\
 	sgen-toggleref.h		\
 	sgen-gc.h		\
@@ -253,7 +257,9 @@ sgen_sources = \
 	sgen-stw.c				\
 	sgen-fin-weak-hash.c	\
 	sgen-layout-stats.c	\
-	sgen-layout-stats.h
+	sgen-layout-stats.h	\
+	sgen-qsort.c	\
+	sgen-qsort.h
 
 libmonoruntime_la_SOURCES = $(common_sources) $(gc_dependent_sources) $(boehm_sources)
 libmonoruntime_la_CFLAGS = $(BOEHM_DEFINES)
@@ -318,7 +324,7 @@ pedump_LDADD = libmonoruntime.la ../io-layer/libwapi.la ../utils/libmonoutils.la
 	$(LIBGC_LIBS) $(GLIB_LIBS) -lm $(LIBICONV) $(PEDUMP_DTRACE_OBJECT)
 
 if PLATFORM_DARWIN
-pedump_LDFLAGS=-framework CoreFoundation
+pedump_LDFLAGS=-framework CoreFoundation -framework Foundation
 endif
 endif
 endif

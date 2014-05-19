@@ -30,8 +30,6 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if NET_2_0
-
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -286,6 +284,10 @@ namespace MonoTests.System.Collections.Generic {
 			Assert.AreEqual (l1.Count, l1.Capacity);
 			for (int i = 0; i < l1.Count; i++)
 				Assert.AreEqual (_list1 [i], l1 [i]);
+
+			var input = new [] { "a", "b", "c" };
+			var l2 = new List<string>(input);
+			Assert.AreEqual (3, l2.Capacity);
 		}
 
 		[Test, ExpectedException (typeof (ArgumentNullException))]
@@ -1365,6 +1367,20 @@ namespace MonoTests.System.Collections.Generic {
 			Assert.IsTrue (Throws (delegate { var x = e4.Current; }));
 		}
 
+		[Test]
+		public void Enumerator_Reset ()
+		{
+			var l = new List<int> () {
+				4
+			};
+
+			IEnumerator<int> e = l.GetEnumerator ();
+			Assert.IsTrue (e.MoveNext (), "#1");
+			Assert.AreEqual (4, e.Current, "#2");
+			e.Reset ();
+			Assert.AreEqual (0, e.Current, "#3");
+		}
+
 		[Test] //bug #672907
 		public void ICollectionCopyToExceptions ()
 		{
@@ -1549,5 +1565,4 @@ namespace MonoTests.System.Collections.Generic {
 
 	}
 }
-#endif
 

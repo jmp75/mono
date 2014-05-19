@@ -25,6 +25,7 @@
 #include <mono/utils/hazard-pointer.h>
 #include <mono/utils/mono-tls.h>
 #include <mono/utils/mono-mmap.h>
+#include <mono/utils/mono-threads.h>
 #include <mono/metadata/object.h>
 #include <mono/metadata/object-internals.h>
 #include <mono/metadata/domain-internals.h>
@@ -42,7 +43,7 @@
 #include <metadata/profiler-private.h>
 #include <mono/metadata/coree.h>
 
-/* #define DEBUG_DOMAIN_UNLOAD */
+//#define DEBUG_DOMAIN_UNLOAD 1
 
 /* we need to use both the Tls* functions and __thread because
  * some archs may generate faster jit code with one meachanism
@@ -58,17 +59,25 @@ MONO_FAST_TLS_DECLARE(tls_appdomain);
 #define GET_APPDOMAIN() ((MonoDomain*)MONO_FAST_TLS_GET(tls_appdomain))
 
 #define SET_APPDOMAIN(x) do { \
+	MonoThreadInfo *info; \
 	MONO_FAST_TLS_SET (tls_appdomain,x); \
 	mono_native_tls_set_value (appdomain_thread_id, x); \
 	mono_gc_set_current_thread_appdomain (x); \
+	info = mono_thread_info_current (); \
+	if (info) \
+		mono_thread_info_tls_set (info, TLS_KEY_DOMAIN, (x));	\
 } while (FALSE)
 
 #else /* !MONO_HAVE_FAST_TLS */
 
 #define GET_APPDOMAIN() ((MonoDomain *)mono_native_tls_get_value (appdomain_thread_id))
 #define SET_APPDOMAIN(x) do {						\
+		MonoThreadInfo *info;								\
 		mono_native_tls_set_value (appdomain_thread_id, x);	\
 		mono_gc_set_current_thread_appdomain (x);		\
+		info = mono_thread_info_current ();				\
+		if (info)												 \
+			mono_thread_info_tls_set (info, TLS_KEY_DOMAIN, (x));	\
 	} while (FALSE)
 
 #endif
@@ -80,6 +89,7 @@ static guint16 appdomain_list_size = 0;
 static guint16 appdomain_next = 0;
 static MonoDomain **appdomains_list = NULL;
 static MonoImage *exe_image;
+static gboolean debug_domain_unload;
 
 gboolean mono_dont_free_domains;
 
@@ -116,6 +126,7 @@ static const MonoRuntimeInfo supported_runtimes[] = {
 	{"v4.0.30319","4.5", { {4,0,0,0}, {10,0,0,0}, {4,0,0,0}, {4,0,0,0} } },
 	{"v4.0.30128","4.0", { {4,0,0,0}, {10,0,0,0}, {4,0,0,0}, {4,0,0,0} } },
 	{"v4.0.20506","4.0", { {4,0,0,0}, {10,0,0,0}, {4,0,0,0}, {4,0,0,0} } },
+	{"mobile",    "2.1", { {2,0,5,0}, {10,0,0,0}, {2,0,5,0}, {2,0,5,0} } },
 	{"moonlight", "2.1", { {2,0,5,0}, { 9,0,0,0}, {3,5,0,0}, {3,0,0,0} } },
 };
 
@@ -1026,6 +1037,7 @@ lock_free_mempool_free (LockFreeMempool *mp)
 		mono_vfree (chunk, mono_pagesize ());
 		chunk = next;
 	}
+	g_free (mp);
 }
 
 /*
@@ -1329,6 +1341,10 @@ mono_init_internal (const char *filename, const char *exe_filename, const char *
 	MonoImageOpenStatus status = MONO_IMAGE_OK;
 	const MonoRuntimeInfo* runtimes [G_N_ELEMENTS (supported_runtimes) + 1];
 	int n;
+
+#ifdef DEBUG_DOMAIN_UNLOAD
+	debug_domain_unload = TRUE;
+#endif
 
 	if (domain)
 		g_assert_not_reached ();
@@ -1966,6 +1982,13 @@ mono_domain_free (MonoDomain *domain, gboolean force)
 
 	mono_reflection_cleanup_domain (domain);
 
+	/* This must be done before type_hash is freed */
+	if (domain->class_vtable_array) {
+		int i;
+		for (i = 0; i < domain->class_vtable_array->len; ++i)
+			unregister_vtable_reflection_type (g_ptr_array_index (domain->class_vtable_array, i));
+	}
+
 	if (domain->type_hash) {
 		mono_g_hash_table_destroy (domain->type_hash);
 		domain->type_hash = NULL;
@@ -1973,12 +1996,6 @@ mono_domain_free (MonoDomain *domain, gboolean force)
 	if (domain->type_init_exception_hash) {
 		mono_g_hash_table_destroy (domain->type_init_exception_hash);
 		domain->type_init_exception_hash = NULL;
-	}
-
-	if (domain->class_vtable_array) {
-		int i;
-		for (i = 0; i < domain->class_vtable_array->len; ++i)
-			unregister_vtable_reflection_type (g_ptr_array_index (domain->class_vtable_array, i));
 	}
 
 	for (tmp = domain->domain_assemblies; tmp; tmp = tmp->next) {
@@ -2076,18 +2093,18 @@ mono_domain_free (MonoDomain *domain, gboolean force)
 	max_domain_code_alloc = MAX (max_domain_code_alloc, code_alloc);
 	max_domain_code_size = MAX (max_domain_code_size, code_size);
 
-#ifdef DEBUG_DOMAIN_UNLOAD
-	mono_mempool_invalidate (domain->mp);
-	mono_code_manager_invalidate (domain->code_mp);
-#else
+	if (debug_domain_unload) {
+		mono_mempool_invalidate (domain->mp);
+		mono_code_manager_invalidate (domain->code_mp);
+	} else {
 #ifndef DISABLE_PERFCOUNTERS
-	mono_perfcounters->loader_bytes -= mono_mempool_get_allocated (domain->mp);
+		mono_perfcounters->loader_bytes -= mono_mempool_get_allocated (domain->mp);
 #endif
-	mono_mempool_destroy (domain->mp);
-	domain->mp = NULL;
-	mono_code_manager_destroy (domain->code_mp);
-	domain->code_mp = NULL;
-#endif	
+		mono_mempool_destroy (domain->mp);
+		domain->mp = NULL;
+		mono_code_manager_destroy (domain->code_mp);
+		domain->code_mp = NULL;
+	}
 	lock_free_mempool_free (domain->lock_free_mp);
 	domain->lock_free_mp = NULL;
 
@@ -2346,7 +2363,7 @@ mono_domain_add_class_static_data (MonoDomain *domain, MonoClass *klass, gpointe
 		if (next >= size) {
 			/* 'data' is allocated by alloc_fixed */
 			gpointer *new_array = mono_gc_alloc_fixed (sizeof (gpointer) * (size * 2), MONO_GC_ROOT_DESCR_FOR_FIXED (size * 2));
-			mono_gc_memmove (new_array, domain->static_data_array, sizeof (gpointer) * size);
+			mono_gc_memmove_aligned (new_array, domain->static_data_array, sizeof (gpointer) * size);
 			size *= 2;
 			new_array [1] = GINT_TO_POINTER (size);
 			mono_gc_free_fixed (domain->static_data_array);
@@ -2742,4 +2759,10 @@ int
 mono_framework_version (void)
 {
 	return current_runtime->framework_version [0] - '0';
+}
+
+void
+mono_enable_debug_domain_unload (gboolean enable)
+{
+	debug_domain_unload = enable;
 }

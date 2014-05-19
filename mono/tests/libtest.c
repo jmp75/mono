@@ -1973,6 +1973,18 @@ mono_test_stdcall_name_mangling (int a, int b, int c)
         return a + b + c;
 }
 
+LIBTEST_API int
+mono_test_stdcall_mismatch_1 (int a, int b, int c)
+{
+        return a + b + c;
+}
+
+LIBTEST_API int STDCALL
+mono_test_stdcall_mismatch_2 (int a, int b, int c)
+{
+        return a + b + c;
+}
+
 /*
  * PASSING AND RETURNING SMALL STRUCTURES FROM DELEGATES TESTS
  */
@@ -5300,3 +5312,81 @@ mono_test_marshal_return_lpwstr (void)
 
 	return res;
 }
+
+
+#ifndef TARGET_X86
+
+LIBTEST_API int STDCALL
+mono_test_has_thiscall (void)
+{
+	return 1;
+}
+
+LIBTEST_API int
+_mono_test_native_thiscall1 (int arg)
+{
+	return arg;
+}
+
+LIBTEST_API int
+_mono_test_native_thiscall2 (int arg, int arg2)
+{
+	return arg + (arg2^1);
+}
+
+LIBTEST_API int
+_mono_test_native_thiscall3 (int arg, int arg2, int arg3)
+{
+	return arg + (arg2^1) + (arg3^2);
+}
+
+#elif defined(__GNUC__)
+
+LIBTEST_API int STDCALL
+mono_test_has_thiscall (void)
+{
+	return 1;
+}
+
+#define def_asm_fn(name) \
+	"\t.align 4\n" \
+	"\t.globl _" #name "\n" \
+	"_" #name ":\n" \
+	"\t.globl __" #name "\n" \
+	"__" #name ":\n"
+
+asm(".text\n"
+
+def_asm_fn(mono_test_native_thiscall1)
+"\tmovl %ecx,%eax\n"
+"\tret\n"
+
+def_asm_fn(mono_test_native_thiscall2)
+"\tmovl %ecx,%eax\n"
+"\tmovl 4(%esp),%ecx\n"
+"\txorl $1,%ecx\n"
+"\taddl %ecx,%eax\n"
+"\tret $4\n"
+
+def_asm_fn(mono_test_native_thiscall3)
+"\tmovl %ecx,%eax\n"
+"\tmovl 4(%esp),%ecx\n"
+"\txorl $1,%ecx\n"
+"\taddl %ecx,%eax\n"
+"\tmovl 8(%esp),%ecx\n"
+"\txorl $2,%ecx\n"
+"\taddl %ecx,%eax\n"
+"\tret $8\n"
+
+);
+
+#else
+
+LIBTEST_API int STDCALL
+mono_test_has_thiscall (void)
+{
+	return 0;
+}
+
+#endif
+

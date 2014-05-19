@@ -34,6 +34,7 @@
 #include "metadata/gc-internal.h"
 #include "metadata/sgen-archdep.h"
 #include "metadata/object-internals.h"
+#include "utils/mono-signal-handler.h"
 
 #if defined(__APPLE__) || defined(__OpenBSD__) || defined(__FreeBSD__)
 const static int suspend_signal_num = SIGXFSZ;
@@ -59,6 +60,7 @@ suspend_thread (SgenThreadInfo *info, void *context)
 
 	info->stopped_domain = mono_domain_get ();
 	info->stopped_ip = context ? (gpointer) ARCH_SIGCTX_IP (context) : NULL;
+	info->signal = 0;
 	stop_count = sgen_global_stop_count;
 	/* duplicate signal */
 	if (0 && info->stop_count == stop_count)
@@ -120,20 +122,28 @@ suspend_thread (SgenThreadInfo *info, void *context)
 }
 
 /* LOCKING: assumes the GC lock is held (by the stopping thread) */
-static void
-suspend_handler (int sig, siginfo_t *siginfo, void *context)
+MONO_SIGNAL_HANDLER_FUNC (static, suspend_handler, (int sig, siginfo_t *siginfo, void *context))
 {
+	/*
+	 * The suspend signal handler potentially uses syscalls that
+	 * can set errno, and it calls functions that use the hazard
+	 * pointer machinery.  Since we're interrupting other code we
+	 * must restore those to the values they had when we
+	 * interrupted.
+	 */
+
 	SgenThreadInfo *info;
 	int old_errno = errno;
+	int hp_save_index = mono_hazard_pointer_save_for_signal_handler ();
 
 	info = mono_thread_info_current ();
 	suspend_thread (info, context);
 
+	mono_hazard_pointer_restore_for_signal_handler (hp_save_index);
 	errno = old_errno;
 }
 
-static void
-restart_handler (int sig)
+MONO_SIGNAL_HANDLER_FUNC (static, restart_handler, (int sig))
 {
 	SgenThreadInfo *info;
 	int old_errno = errno;
@@ -198,6 +208,8 @@ sgen_thread_handshake (BOOL suspend)
 
 	sgen_wait_for_suspend_ack (count);
 
+	SGEN_LOG (4, "%s handshake for %d threads\n", suspend ? "suspend" : "resume", count);
+
 	return count;
 }
 
@@ -216,7 +228,7 @@ sgen_os_init (void)
 		g_error ("failed sigaction");
 	}
 
-	sinfo.sa_handler = restart_handler;
+	sinfo.sa_handler = (void*) restart_handler;
 	if (sigaction (restart_signal_num, &sinfo, NULL) != 0) {
 		g_error ("failed sigaction");
 	}
@@ -233,6 +245,12 @@ int
 mono_gc_get_suspend_signal (void)
 {
 	return suspend_signal_num;
+}
+
+int
+mono_gc_get_restart_signal (void)
+{
+	return restart_signal_num;
 }
 #endif
 #endif

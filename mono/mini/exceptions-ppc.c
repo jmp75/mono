@@ -316,11 +316,7 @@ mono_arch_get_call_filter (MonoTrampInfo **info, gboolean aot)
 void
 mono_ppc_throw_exception (MonoObject *exc, unsigned long eip, unsigned long esp, mgreg_t *int_regs, gdouble *fp_regs, gboolean rethrow)
 {
-	static void (*restore_context) (MonoContext *);
 	MonoContext ctx;
-
-	if (!restore_context)
-		restore_context = mono_get_restore_context ();
 
 	/* adjust eip so that it point into the call instruction */
 	eip -= 4;
@@ -339,7 +335,7 @@ mono_ppc_throw_exception (MonoObject *exc, unsigned long eip, unsigned long esp,
 			mono_ex->stack_trace = NULL;
 	}
 	mono_handle_exception (&ctx, exc);
-	restore_context (&ctx);
+	mono_restore_context (&ctx);
 
 	g_assert_not_reached ();
 }
@@ -533,10 +529,7 @@ mono_arch_find_jit_info (MonoDomain *domain, MonoJitTlsData *jit_tls,
 
 		frame->type = FRAME_TYPE_MANAGED;
 
-		if (ji->from_aot)
-			unwind_info = mono_aot_get_unwind_info (ji, &unwind_info_len);
-		else
-			unwind_info = mono_get_cached_unwind_info (ji->used_regs, &unwind_info_len);
+		unwind_info = mono_jinfo_get_unwind_info (ji, &unwind_info_len);
 
 		sframe = (MonoPPCStackFrame*)MONO_CONTEXT_GET_SP (ctx);
 		MONO_CONTEXT_SET_BP (new_ctx, sframe->sp);
@@ -669,13 +662,11 @@ mono_ppc_set_func_into_sigctx (void *sigctx, void *func)
 static void
 altstack_handle_and_restore (void *sigctx, gpointer obj)
 {
-	void (*restore_context) (MonoContext *);
 	MonoContext mctx;
 
-	restore_context = mono_get_restore_context ();
 	mono_arch_sigctx_to_monoctx (sigctx, &mctx);
 	mono_handle_exception (&mctx, obj);
-	restore_context (&mctx);
+	mono_restore_context (&mctx);
 }
 
 void
@@ -754,16 +745,12 @@ handle_signal_exception (gpointer obj)
 {
 	MonoJitTlsData *jit_tls = mono_native_tls_get_value (mono_jit_tls_id);
 	MonoContext ctx;
-	static void (*restore_context) (MonoContext *);
-
-	if (!restore_context)
-		restore_context = mono_get_restore_context ();
 
 	memcpy (&ctx, &jit_tls->ex_ctx, sizeof (MonoContext));
 
 	mono_handle_exception (&ctx, obj);
 
-	restore_context (&ctx);
+	mono_restore_context (&ctx);
 }
 
 static void

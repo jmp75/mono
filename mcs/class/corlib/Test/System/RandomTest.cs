@@ -58,6 +58,13 @@ namespace MonoTests.System {
 		}
 
 		[Test]
+		public void NextZero ()
+		{
+			Random r = new Random ();
+			Assert.AreEqual (0, r.Next (0),"Next(0) failed");
+		}
+
+		[Test]
 		public void NextMax()
 		{
 			Random r = new Random();
@@ -191,7 +198,7 @@ namespace MonoTests.System {
 
 			// if the method is not present, e.g. on MS.NET, skip this test
 			if (next == null)
-				return;
+				Assert.Ignore ("The JKiss method is not present, e.g. on MS.NET.");
 
 			// ensure we match the original JKISS random stream
 			// first 64KB but without checking every value (one each KB)

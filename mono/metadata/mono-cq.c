@@ -82,7 +82,7 @@ mono_cq_destroy (MonoCQ *cq)
 	if (!cq)
 		return;
 
-	mono_gc_bzero (cq, sizeof (MonoCQ));
+	mono_gc_bzero_aligned (cq, sizeof (MonoCQ));
 	MONO_GC_UNREGISTER_ROOT (cq->tail);
 	MONO_GC_UNREGISTER_ROOT (cq->head);
 	g_free (cq);
@@ -188,6 +188,8 @@ mono_cq_remove_node (MonoCQ *cq)
 	while (old_head->next == NULL)
 		SleepEx (0, FALSE);
 	cq->head = old_head->next;
+	
+	MONO_OBJECT_SETREF (old_head, next, NULL);
 	old_head = NULL;
 }
 
