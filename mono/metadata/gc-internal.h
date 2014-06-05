@@ -333,7 +333,7 @@ void mono_gc_register_mach_exception_thread (pthread_t thread) MONO_INTERNAL;
 pthread_t mono_gc_get_mach_exception_thread (void) MONO_INTERNAL;
 #endif
 
-gboolean mono_gc_parse_environment_string_extract_number (const char *str, glong *out) MONO_INTERNAL;
+gboolean mono_gc_parse_environment_string_extract_number (const char *str, size_t *out) MONO_INTERNAL;
 
 gboolean mono_gc_precise_stack_mark_enabled (void) MONO_INTERNAL;
 
@@ -355,6 +355,19 @@ struct _MonoReferenceQueue {
 	MonoReferenceQueue *next;
 	gboolean should_be_deleted;
 };
+
+enum {
+	MONO_GC_FINALIZER_EXTENSION_VERSION = 1,
+};
+
+typedef struct {
+	int version;
+	gboolean (*is_class_finalization_aware) (MonoClass *class);
+	void (*object_queued_for_finalization) (MonoObject *object);
+} MonoGCFinalizerCallbacks;
+
+void mono_gc_register_finalizer_callbacks (MonoGCFinalizerCallbacks *callbacks);
+
 
 #ifdef HOST_WIN32
 BOOL APIENTRY mono_gc_dllmain (HMODULE module_handle, DWORD reason, LPVOID reserved) MONO_INTERNAL;

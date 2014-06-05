@@ -214,7 +214,7 @@ namespace Microsoft.Build.Evaluation
 			// At first step, all non-imported properties are evaluated TOO, WHILE those properties are being evaluated.
 			// This means, Include and IncludeGroup elements with Condition attribute MAY contain references to
 			// properties and they will be expanded.
-			var elements = EvaluatePropertiesAndImports (Xml.Children).ToArray (); // ToArray(): to not lazily evaluate elements.
+			var elements = EvaluatePropertiesAndImportsAndChooses (Xml.Children).ToArray (); // ToArray(): to not lazily evaluate elements.
 			
 			// next, evaluate items
 			EvaluateItems (elements);
@@ -223,7 +223,7 @@ namespace Microsoft.Build.Evaluation
 			EvaluateTargets (elements);
 		}
 		
-		IEnumerable<ProjectElement> EvaluatePropertiesAndImports (IEnumerable<ProjectElement> elements)
+		IEnumerable<ProjectElement> EvaluatePropertiesAndImportsAndChooses (IEnumerable<ProjectElement> elements)
 		{
 			// First step: evaluate Properties
 			foreach (var child in elements) {
@@ -248,6 +248,20 @@ namespace Microsoft.Build.Evaluation
 				if (inc != null && Evaluate (inc.Condition))
 					foreach (var e in Import (inc))
 						yield return e;
+				var choose = child as ProjectChooseElement;
+				if (choose != null && Evaluate (choose.Condition)) {
+					bool done = false;
+					foreach (ProjectWhenElement when in choose.WhenElements)
+						if (Evaluate (when.Condition)) {
+							foreach (var e in EvaluatePropertiesAndImportsAndChooses (when.Children))
+								yield return e;
+							done = true;
+							break;
+						}
+					if (!done && choose.OtherwiseElement != null)
+						foreach (var e in EvaluatePropertiesAndImportsAndChooses (choose.OtherwiseElement.Children))
+							yield return e;
+				}
 			}
 		}
 		
@@ -296,11 +310,12 @@ namespace Microsoft.Build.Evaluation
 					this.targets [te.Name] = new ProjectTargetInstance (te);
 			}
 		}
-		
+
 		IEnumerable<ProjectElement> Import (ProjectImportElement import)
 		{
 			string dir = ProjectCollection.GetEvaluationTimeThisFileDirectory (() => FullPath);
-			string path = WindowsCompatibilityExtensions.FindMatchingPath (ExpandString (import.Project));
+			// FIXME: use appropriate logger (but cannot be instantiated here...?)
+			string path = ProjectCollection.FindFileInSeveralExtensionsPath (ref extensions_path_override, ExpandString, import.Project, TextWriter.Null.WriteLine);
 			path = Path.IsPathRooted (path) ? path : dir != null ? Path.Combine (dir, path) : Path.GetFullPath (path);
 			if (ProjectCollection.OngoingImports.Contains (path)) {
 				switch (load_settings) {
@@ -314,7 +329,7 @@ namespace Microsoft.Build.Evaluation
 				using (var reader = XmlReader.Create (path)) {
 					var root = ProjectRootElement.Create (reader, ProjectCollection);
 					raw_imports.Add (new ResolvedImport (import, root, true));
-					return this.EvaluatePropertiesAndImports (root.Children).ToArray ();
+					return this.EvaluatePropertiesAndImportsAndChooses (root.Children).ToArray ();
 				}
 			} finally {
 				ProjectCollection.OngoingImports.Pop ();
@@ -367,12 +382,12 @@ namespace Microsoft.Build.Evaluation
 
 		public bool Build ()
 		{
-			return Build (Xml.DefaultTargets.Split (target_sep, StringSplitOptions.RemoveEmptyEntries));
+			return Build (GetDefaultTargets (Xml));
 		}
 
 		public bool Build (IEnumerable<ILogger> loggers)
 		{
-			return Build (Xml.DefaultTargets.Split (target_sep, StringSplitOptions.RemoveEmptyEntries), loggers);
+			return Build (GetDefaultTargets (Xml), loggers);
 		}
 
 		public bool Build (string target)
@@ -387,7 +402,7 @@ namespace Microsoft.Build.Evaluation
 
 		public bool Build (ILogger logger)
 		{
-			return Build (Xml.DefaultTargets.Split (target_sep, StringSplitOptions.RemoveEmptyEntries), new ILogger [] {logger});
+			return Build (GetDefaultTargets (Xml), new ILogger [] {logger});
 		}
 
 		public bool Build (string[] targets, IEnumerable<ILogger> loggers)
@@ -397,7 +412,7 @@ namespace Microsoft.Build.Evaluation
 
 		public bool Build (IEnumerable<ILogger> loggers, IEnumerable<ForwardingLoggerRecord> remoteLoggers)
 		{
-			return Build (Xml.DefaultTargets.Split (target_sep, StringSplitOptions.RemoveEmptyEntries), loggers, remoteLoggers);
+			return Build (GetDefaultTargets (Xml), loggers, remoteLoggers);
 		}
 
 		public bool Build (string target, IEnumerable<ILogger> loggers)
@@ -417,6 +432,41 @@ namespace Microsoft.Build.Evaluation
 		public bool Build (string target, IEnumerable<ILogger> loggers, IEnumerable<ForwardingLoggerRecord> remoteLoggers)
 		{
 			return Build (new string [] { target }, loggers, remoteLoggers);
+		}
+
+		// FIXME: this is a duplicate code between Project and ProjectInstance
+		static readonly char [] item_target_sep = {';'};
+		
+		string [] GetDefaultTargets (ProjectRootElement xml)
+		{
+			var ret = GetDefaultTargets (xml, true, true);
+			return ret.Any () ? ret : GetDefaultTargets (xml, false, true);
+		}
+		
+		string [] GetDefaultTargets (ProjectRootElement xml, bool fromAttribute, bool checkImports)
+		{
+			if (fromAttribute) {
+				var ret = xml.DefaultTargets.Split (item_target_sep, StringSplitOptions.RemoveEmptyEntries).Select (s => s.Trim ()).ToArray ();
+				if (checkImports && ret.Length == 0) {
+					foreach (var imp in this.raw_imports) {
+						ret = GetDefaultTargets (imp.ImportedProject, true, false);
+						if (ret.Any ())
+							break;
+					}
+				}
+				return ret;
+			} else {
+				if (xml.Targets.Any ())
+					return new String [] { xml.Targets.First ().Name };
+				if (checkImports) {
+					foreach (var imp in this.raw_imports) {
+						var ret = GetDefaultTargets (imp.ImportedProject, false, false);
+						if (ret.Any ())
+							return ret;
+					}
+				}
+				return new string [0];
+			}
 		}
 
 		public ProjectInstance CreateProjectInstance ()
@@ -492,8 +542,12 @@ namespace Microsoft.Build.Evaluation
 			return property.EvaluatedValue;
 		}
 
+		string extensions_path_override;
+
 		public ProjectProperty GetProperty (string name)
 		{
+			if (extensions_path_override != null && (name.Equals ("MSBuildExtensionsPath") || name.Equals ("MSBuildExtensionsPath32") || name.Equals ("MSBuildExtensionsPath64")))
+				return new ReservedProjectProperty (this, name, () => extensions_path_override);
 			return properties.FirstOrDefault (p => p.Name.Equals (name, StringComparison.OrdinalIgnoreCase));
 		}
 

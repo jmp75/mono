@@ -43,6 +43,7 @@ namespace System.Security.Claims {
 		
 		List<Claim> claims;
 		ClaimsIdentity actor;
+		string auth_type;
 
 		public ClaimsIdentity ()
 			: this (claims: null, authenticationType: null, nameType: null, roleType: null)
@@ -69,12 +70,12 @@ namespace System.Security.Claims {
 		{
 			claims = claims == null ? new List<Claim> (): new List<Claim> (claims);
 			
-			AuthenticationType = authenticationType;
-
 			// Special case: if empty, set to null.
 			if (authenticationType == "")
-				AuthenticationType = null;
-			
+				auth_type = null;
+			else
+				auth_type = authenticationType;
+
 			NameClaimType = nameType == null ? DefaultNameClaimType : nameType;
 			RoleClaimType = roleType == null ? DefaultRoleClaimType : roleType;
 		}
@@ -96,12 +97,14 @@ namespace System.Security.Claims {
 				foreach (var c in ci.Claims)
 					this.claims.Add (c);
 				
-				foreach (var c in claims)
-					this.claims.Add (c);
+				if (claims != null) {
+					foreach (var c in claims)
+						this.claims.Add (c);
+				}
 				Label = ci.Label;
 				NameClaimType = ci.NameClaimType;
 				RoleClaimType = ci.RoleClaimType;
-				AuthenticationType = ci.AuthenticationType;
+				auth_type = ci.AuthenticationType;
 			}
 		}
 
@@ -130,7 +133,11 @@ namespace System.Security.Claims {
 			}
 		}
 
-		public virtual string AuthenticationType { get; private set; }
+		public virtual string AuthenticationType {
+			get {
+				return auth_type;
+			}
+		}
 		public object BootstrapContext { get; set; }
 		public string Label { get; set; }
 		public virtual string Name {

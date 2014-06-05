@@ -1,8 +1,9 @@
 //
 // Properties.cs
 //
-// Author:
+// Authors:
 //   Marek Sieradzki (marek.sieradzki@gmail.com)
+//   Marek Safar (marek.safar@gmail.com)
 //
 // (C) 2006 Marek Sieradzki
 //
@@ -99,10 +100,12 @@ namespace MonoTests.Microsoft.Build.BuildEngine.Various {
 						<PropertyGroup>
 							<Config>debug</Config>
 							<NullValue>null</NullValue>
+							<TargetValue>  </TargetValue>
 							<Prop1>$(Config.Substring(0,3)) </Prop1>
 							<Prop2>$(Config.Length )</Prop2>
 							<Prop3>$(Config.StartsWith ('DE', System.StringComparison.OrdinalIgnoreCase))</Prop3>
 							<Prop4>$(NullValue.StartsWith ('Te', StringComparison.OrdinalIgnoreCase))</Prop4>
+							<Prop5>$(TargetValue.Trim('\\'))</Prop5>
 						</PropertyGroup>
 					</Project>
 				";
@@ -112,6 +115,7 @@ namespace MonoTests.Microsoft.Build.BuildEngine.Various {
 			Assert.AreEqual ("5", proj.GetEvaluatedProperty ("Prop2"), "#2");
 			Assert.AreEqual ("True", proj.GetEvaluatedProperty ("Prop3"), "#3");
 			Assert.AreEqual ("False", proj.GetEvaluatedProperty ("Prop4"), "#4");
+			Assert.AreEqual ("", proj.GetEvaluatedProperty ("Prop5"), "#5");
 		}
 
 		[Test]
@@ -154,6 +158,21 @@ namespace MonoTests.Microsoft.Build.BuildEngine.Various {
 
 			proj.LoadXml (documentString);
 			Assert.AreEqual (DateTime.Now.ToString ("yyyy.MM.dd"), proj.GetEvaluatedProperty ("Prop1"), "#1");
+		}
+
+		[Test]
+		public void InstanceMemberOnStaticProperty ()
+		{
+			string documentString = @"
+					<Project xmlns=""http://schemas.microsoft.com/developer/msbuild/2003"">
+						<PropertyGroup>
+							<Prop1>$([System.DateTime]::Now.Year)</Prop1>
+						</PropertyGroup>
+					</Project>
+				";
+
+			proj.LoadXml (documentString);
+			Assert.AreEqual (DateTime.Now.Year.ToString (), proj.GetEvaluatedProperty ("Prop1"), "#1");
 		}
 
 		[Test]

@@ -8,7 +8,7 @@ monotouch_SUBDIRS = System.Collections.Concurrent System.Collections System.Comp
 	System.Reflection.Extensions System.Reflection.Primitives System.Reflection System.Resources.ResourceManager System.Runtime.Extensions \
 	System.Runtime.InteropServices System.Runtime.InteropServices.WindowsRuntime System.Runtime.Numerics System.Runtime.Serialization.Json \
 	System.Runtime.Serialization.Primitives System.Runtime.Serialization.Xml System.Runtime System.Security.Principal System.ServiceModel.Http \
-	System.ServiceModel.Primitives System.Text.Encoding.Extensions System.Text.Encoding System.Text.RegularExpressions System.Threading.Tasks.Parallel \
+	System.ServiceModel.Primitives System.ServiceModel.Security System.Text.Encoding.Extensions System.Text.Encoding System.Text.RegularExpressions System.Threading.Tasks.Parallel \
 	System.Threading.Tasks System.Threading.Timer System.Threading System.Xml.ReaderWriter System.Xml.XDocument System.Xml.XmlSerializer
 
 mobile_static_SUBDIRS = $(monotouch_SUBDIRS)
@@ -19,9 +19,9 @@ monodroid_SUBDIRS = $(net_4_5_SUBDIRS)
 
 xammac_SUBDIRS = $(net_4_5_SUBDIRS)
 
-SUBDIRS = $(net_4_5_SUBDIRS)
+PROFILE_SUBDIRS = $(net_4_5_SUBDIRS)
 
-OVERRIDE_TARGET_ALL = yes
+#OVERRIDE_TARGET_ALL = yes
 
 # 
 # The output directory for the facade assemblies
@@ -39,12 +39,13 @@ target_libraries = $(patsubst %,$(target_dir)/%.dll,$(SUBDIRS))
 $(target_dir)/%.dll: 
 	(cd `basename $@ .dll`; $(MAKE))
 
-all.override: $(target_libraries)
+#all.override: $(target_libraries)
 
 include $(MCS_BUILD_DIR)/rules.make
 
 dist-local: dist-default
 
+SUBDIRS = $(net_4_5_SUBDIRS)
 
 doc-update-local:
 	@echo "not doing docs"

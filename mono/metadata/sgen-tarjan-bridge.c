@@ -390,9 +390,9 @@ retry:
 static void
 free_color_buckets (void)
 {
-	color_data_count = 0;
-
 	ColorBucket *cur, *tmp;
+
+	color_data_count = 0;
 
 	for (cur = root_color_bucket; cur; cur = tmp) {
 		ColorData *cd;
@@ -502,7 +502,7 @@ static HashEntry merge_cache [COLOR_CACHE_SIZE][ELEMENTS_PER_BUCKET];
 static int
 mix_hash (size_t hash)
 {
-	return ((hash * 215497) >> 16) ^ (hash * 1823231) + hash;
+	return (int)(((hash * 215497) >> 16) ^ (hash * 1823231) + hash);
 }
 
 static void
